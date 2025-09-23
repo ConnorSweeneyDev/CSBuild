@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 
-int try_main()
+int csb_main()
 {
   csb::name = "test";
   csb::cxx_standard = CXX20;

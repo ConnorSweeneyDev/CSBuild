@@ -428,7 +428,7 @@ namespace csb
               << std::endl;                                                                                            \
     try                                                                                                                \
     {                                                                                                                  \
-      return try_main();                                                                                               \
+      return csb_main();                                                                                               \
     }                                                                                                                  \
     catch (const std::exception &e)                                                                                    \
     {                                                                                                                  \
