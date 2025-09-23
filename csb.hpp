@@ -419,61 +419,13 @@ namespace csb
 #define CSB_MAIN()                                                                                                     \
   int main()                                                                                                           \
   {                                                                                                                    \
-    std::string architecture = {};                                                                                     \
-    std::string vs_path = {};                                                                                          \
-    std::string toolset_version = {};                                                                                  \
-    std::string sdk_version = {};                                                                                      \
-    bool architecture_found = false;                                                                                   \
-    {                                                                                                                  \
-      char *arch = nullptr;                                                                                            \
-      size_t len = 0;                                                                                                  \
-      if (_dupenv_s(&arch, &len, "VSCMD_ARG_HOST_ARCH") == 0 && arch)                                                  \
-      {                                                                                                                \
-        architecture_found = true;                                                                                     \
-        architecture = std::string(arch);                                                                              \
-        free(arch);                                                                                                    \
-      }                                                                                                                \
-    }                                                                                                                  \
-    bool vs_found = false;                                                                                             \
-    {                                                                                                                  \
-      char *vsinstall = nullptr;                                                                                       \
-      size_t len = 0;                                                                                                  \
-      if (_dupenv_s(&vsinstall, &len, "VSINSTALLDIR") == 0 && vsinstall)                                               \
-      {                                                                                                                \
-        vs_found = true;                                                                                               \
-        vs_path = std::string(vsinstall);                                                                              \
-        free(vsinstall);                                                                                               \
-      }                                                                                                                \
-    }                                                                                                                  \
-    bool toolset_found = false;                                                                                        \
-    {                                                                                                                  \
-      char *toolset = nullptr;                                                                                         \
-      size_t len = 0;                                                                                                  \
-      if (_dupenv_s(&toolset, &len, "VCToolsVersion") == 0 && toolset)                                                 \
-      {                                                                                                                \
-        toolset_found = true;                                                                                          \
-        toolset_version = std::string(toolset);                                                                        \
-        free(toolset);                                                                                                 \
-      }                                                                                                                \
-    }                                                                                                                  \
-    bool sdk_found = false;                                                                                            \
-    {                                                                                                                  \
-      char *sdkroot = nullptr;                                                                                         \
-      size_t len = 0;                                                                                                  \
-      if (_dupenv_s(&sdkroot, &len, "WindowsSDKVersion") == 0 && sdkroot)                                              \
-      {                                                                                                                \
-        sdk_found = true;                                                                                              \
-        sdk_version = std::string(sdkroot);                                                                            \
-        free(sdkroot);                                                                                                 \
-      }                                                                                                                \
-    }                                                                                                                  \
-    if (!architecture_found || !vs_found || !toolset_found || !sdk_found)                                              \
-      throw std::runtime_error(                                                                                        \
-        "Environment variables not set. Please run from an environment with Visual Studio build tools available.");    \
+    std::string architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH");                          \
+    std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR");                                      \
+    std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion");                            \
+    std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion");                             \
     std::cout << std::format("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n", architecture,      \
                              vs_path, toolset_version, sdk_version)                                                    \
               << std::endl;                                                                                            \
-                                                                                                                       \
     try                                                                                                                \
     {                                                                                                                  \
       return try_main();                                                                                               \
