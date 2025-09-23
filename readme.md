@@ -9,6 +9,7 @@ A zero dependency, cross-platform build system for C++ projects.
 - **Multi-Project Support**: Easily use other projects that use CSBuild as a build system.
 - **Custom Build Steps**: Define custom build steps for specialized tasks.
 - **VCPKG Integration**: Integrates with VCPKG for package management.
+- **Clangd Integration**: Generates a `compile_commands.json` file for Clangd support.
 - **Clang Format Integration**: Integrates with Clang Format for code formatting.
 
 ## Requirements

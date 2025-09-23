@@ -26,6 +26,7 @@ int csb_main()
   csb::generate_compile_commands();
   csb::clang_format("21.1.1");
   csb::build();
+
   return EXIT_SUCCESS;
 }
 
