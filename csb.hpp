@@ -211,9 +211,14 @@ namespace csb::utility
     std::filesystem::path clang_path = std::format("build\\clang-{}", clang_version);
     if (std::filesystem::exists(clang_path)) return clang_path.string();
 
+    std::string architecture = utility::get_environment_variable(
+      "VSCMD_ARG_HOST_ARCH", "Ensure you are running from an environment with access to MSVC tools.");
+    if (architecture != "x64" && architecture != "arm64")
+      throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
+    std::string clang_architecture = architecture == "x64" ? "x86_64" : "aarch64";
     std::string url = std::format(
-      "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-x86_64-pc-windows-msvc.tar.xz",
-      clang_version, clang_version);
+      "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-{}-pc-windows-msvc.tar.xz",
+      clang_version, clang_version, clang_architecture);
     std::cout << "Downloading archive at '" + url + "'..." << std::endl;
     utility::live_execute(std::format("curl -f -L -o build\\temp.tar.xz {}", url), "Failed to download archive.",
                           false);
