@@ -20,9 +20,9 @@ int csb_main()
   csb::vcpkg_version = "2025.08.27";
   csb::clang_version = "21.1.1";
 
-  auto vcpkg_output = csb::fetch_vcpkg_dependencies();
-  csb::external_include_directories = {vcpkg_output.include_directory};
-  csb::library_directories = {vcpkg_output.library_directory};
+  auto vcpkg_outputs = csb::fetch_vcpkg_dependencies();
+  csb::external_include_directories = {vcpkg_outputs.include_directory};
+  csb::library_directories = {vcpkg_outputs.library_directory};
   csb::libraries = {"kernel32", "user32",  "shell32", "gdi32", "imm32",    "advapi32", "comdlg32", "ole32",
                     "oleaut32", "version", "winmm",   "uuid",  "setupapi", "dinput8",  "winspool", "SDL3-static"};
 

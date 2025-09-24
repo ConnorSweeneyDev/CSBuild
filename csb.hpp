@@ -254,13 +254,13 @@ namespace csb
 
   inline std::string clang_version = {};
   inline std::string vcpkg_version = {};
-  struct vcpkg_outputs
+  struct vcpkg_output
   {
     std::filesystem::path include_directory = {};
     std::filesystem::path library_directory = {};
   };
 
-  inline vcpkg_outputs fetch_vcpkg_dependencies()
+  inline vcpkg_output fetch_vcpkg_dependencies()
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (!std::filesystem::exists("vcpkg.json")) throw std::runtime_error("vcpkg.json not found.");
@@ -274,12 +274,12 @@ namespace csb
                                 (build_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
-    utility::live_execute(
-      std::format("cd {} && vcpkg.exe install --vcpkg-root . --triplet {} --x-install-root ..\\..\\{}",
-                  vcpkg_path.parent_path().string(), vcpkg_triplet, vcpkg_installed_directory.string()),
-      "Failed to install vcpkg dependencies.", false);
+    utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
+                                      vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
+                                      vcpkg_installed_directory.string()),
+                          "Failed to install vcpkg dependencies.", false);
 
-    vcpkg_outputs outputs = {vcpkg_installed_directory / vcpkg_triplet / "include",
+    vcpkg_output outputs = {vcpkg_installed_directory / vcpkg_triplet / "include",
                              vcpkg_installed_directory / vcpkg_triplet /
                                (build_configuration == RELEASE ? "lib" : "debug/lib")};
     if (!std::filesystem::exists(outputs.include_directory) || !std::filesystem::exists(outputs.library_directory))
