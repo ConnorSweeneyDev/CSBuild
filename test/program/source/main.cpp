@@ -3,7 +3,8 @@
 
 #include "SDL3/SDL_main.h"
 
-#include "window.hpp"
+#include "sdl.hpp"
+#include "stb.hpp"
 
 int SDL_main(int argc, char *argv[])
 {
@@ -13,6 +14,7 @@ int SDL_main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
+  vertical_flip();
   create_and_destroy_window();
 
   return EXIT_SUCCESS;

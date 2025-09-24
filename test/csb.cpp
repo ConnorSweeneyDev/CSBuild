@@ -17,7 +17,7 @@ int csb_main()
   for (const auto &entry : std::filesystem::recursive_directory_iterator("program/source"))
     if (entry.is_regular_file() && entry.path().extension() == ".cpp") csb::source_files.insert(entry.path());
 
-  auto vcpkg_outputs = csb::vcpkg_install("2025.08.27");
+  auto vcpkg_outputs = csb::vcpkg_install("2025.08.27", {{"sdl3", "3.2.20"}, {"stb", "2024-07-29#1"}});
   csb::external_include_directories = {vcpkg_outputs.include_directory};
   csb::library_directories = {vcpkg_outputs.library_directory};
   csb::libraries = {"kernel32", "user32",  "shell32", "gdi32", "imm32",    "advapi32", "comdlg32", "ole32",

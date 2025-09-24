@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -211,6 +212,50 @@ namespace csb::utility
       });
   }
 
+  inline void generate_vcpkg_manifest(const std::filesystem::path &vcpkg_manifest_path,
+                                      const std::vector<std::pair<std::string, std::string>> &vcpkg_dependencies)
+  {
+    std::cout << "Generating vcpkg manifest... ";
+    std::string commit_hash = {};
+    utility::execute(
+      std::format("cd {} && git rev-parse HEAD", vcpkg_manifest_path.parent_path().string()),
+      [&](const std::string &, const std::string &result)
+      {
+        commit_hash = result;
+        commit_hash.erase(std::remove(commit_hash.begin(), commit_hash.end(), '\n'), commit_hash.end());
+      },
+      [](const std::string &, const int return_code, const std::string &result)
+      {
+        std::cerr << result << std::endl;
+        throw std::runtime_error("Failed to get vcpkg commit hash. Return code: " + std::to_string(return_code));
+      });
+    std::string content = "{\n  \"builtin-baseline\": \"" + commit_hash + "\",\n  \"dependencies\": [\n";
+    for (const auto &dependency : vcpkg_dependencies)
+    {
+      content += std::format("    \"{}\"", dependency.first);
+      if (&dependency != &vcpkg_dependencies.back())
+        content += ",\n";
+      else
+        content += "\n";
+    }
+    content += "  ],\n  \"overrides\": [\n";
+    for (const auto &dependency : vcpkg_dependencies)
+    {
+      content += std::format("    {{\n      \"name\": \"{}\",\n      \"version\": \"{}\"\n    }}", dependency.first,
+                             dependency.second);
+      if (&dependency != &vcpkg_dependencies.back())
+        content += ",\n";
+      else
+        content += "\n";
+    }
+    content += "  ]\n}\n";
+    std::ofstream vcpkg_manifest_file(vcpkg_manifest_path);
+    if (!vcpkg_manifest_file.is_open()) throw std::runtime_error("Failed to open vcpkg.json file for writing.");
+    vcpkg_manifest_file << content;
+    vcpkg_manifest_file.close();
+    std::cout << "done." << std::endl;
+  }
+
   inline std::filesystem::path bootstrap_clang(const std::string &clang_version)
   {
     std::filesystem::path clang_path = std::format("build\\clang-{}", clang_version);
@@ -269,34 +314,34 @@ namespace csb
     std::filesystem::path library_directory = {};
   };
 
-  inline vcpkg_output vcpkg_install(const std::string &vcpkg_version)
+  inline vcpkg_output vcpkg_install(const std::string &vcpkg_version,
+                                    const std::vector<std::pair<std::string, std::string>> &vcpkg_dependencies = {})
   {
-    if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
-    if (!std::filesystem::exists("vcpkg.json")) throw std::runtime_error("vcpkg.json not found.");
-
     std::filesystem::path vcpkg_path = "build\\vcpkg\\vcpkg.exe";
     utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
+    utility::generate_vcpkg_manifest(vcpkg_path.parent_path() / "vcpkg.json", vcpkg_dependencies);
 
     std::string vcpkg_triplet = utility::state.architecture + "-windows" + (linkage_type == STATIC ? "-static" : "") +
                                 (build_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
-    utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {} | more",
-                                      vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
-                                      vcpkg_installed_directory.string()),
-                          "Failed to install vcpkg dependencies.", false);
+    utility::live_execute(
+      std::format("cd {} && .\\vcpkg.exe install --vcpkg-root . --triplet {} --x-install-root ..\\vcpkg_installed",
+                  vcpkg_path.parent_path().string(), vcpkg_triplet),
+      "Failed to install vcpkg dependencies.", false);
 
     vcpkg_output outputs = {vcpkg_installed_directory / vcpkg_triplet / "include",
                             vcpkg_installed_directory / vcpkg_triplet /
                               (build_configuration == RELEASE ? "lib" : "debug/lib")};
     if (!std::filesystem::exists(outputs.include_directory) || !std::filesystem::exists(outputs.library_directory))
       throw std::runtime_error("vcpkg outputs not found.");
+    std::cout << std::endl;
     return outputs;
   }
 
   inline void clang_compile_commands()
   {
-    if (source_files.empty()) throw std::runtime_error("No source files to compile.");
+    if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
 
     auto escape_backslashes = [](const std::string &string) -> std::string
     {
@@ -311,9 +356,10 @@ namespace csb
       return result;
     };
 
+    std::cout << "Generating compile_commands.json... ";
+
     std::filesystem::path compile_commands_path = "compile_commands.json";
     std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
-
     std::string content = std::format(
       "[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
       "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align "
@@ -354,7 +400,7 @@ namespace csb
       throw std::runtime_error("Failed to open compile_commands.json file for writing.");
     compile_commands_file << content;
     compile_commands_file.close();
-    std::cout << "Generated " << compile_commands_path.string() + "\n" << std::endl;
+    std::cout << "done.\n" << std::endl;
   }
 
   inline void clang_format()
