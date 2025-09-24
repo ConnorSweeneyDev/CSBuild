@@ -315,8 +315,11 @@ namespace csb
   };
 
   inline vcpkg_output vcpkg_install(const std::string &vcpkg_version,
-                                    const std::vector<std::pair<std::string, std::string>> &vcpkg_dependencies = {})
+                                    const std::vector<std::pair<std::string, std::string>> &vcpkg_dependencies)
   {
+    if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
+    if (vcpkg_dependencies.empty()) throw std::runtime_error("No vcpkg dependencies provided.");
+
     std::filesystem::path vcpkg_path = "build\\vcpkg\\vcpkg.exe";
     utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
     utility::generate_vcpkg_manifest(vcpkg_path.parent_path() / "vcpkg.json", vcpkg_dependencies);
