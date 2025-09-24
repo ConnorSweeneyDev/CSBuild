@@ -274,17 +274,16 @@ namespace csb
                                 (build_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
-    utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
+    utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {} | more",
                                       vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
                                       vcpkg_installed_directory.string()),
                           "Failed to install vcpkg dependencies.", false);
 
     vcpkg_output outputs = {vcpkg_installed_directory / vcpkg_triplet / "include",
-                             vcpkg_installed_directory / vcpkg_triplet /
-                               (build_configuration == RELEASE ? "lib" : "debug/lib")};
+                            vcpkg_installed_directory / vcpkg_triplet /
+                              (build_configuration == RELEASE ? "lib" : "debug/lib")};
     if (!std::filesystem::exists(outputs.include_directory) || !std::filesystem::exists(outputs.library_directory))
       throw std::runtime_error("vcpkg outputs not found.");
-    std::cout << std::endl;
     return outputs;
   }
 
