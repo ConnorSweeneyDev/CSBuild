@@ -61,14 +61,19 @@ enum configuration
   RELEASE,
   DEBUG
 };
-enum console
+enum subsystem
 {
   CONSOLE,
-  WINDOW
+  WINDOWS
 };
 
 namespace csb::utility
 {
+  struct internal_state
+  {
+    std::string architecture = {};
+  } inline state = {};
+
   inline std::string get_environment_variable(const std::string &name, const std::string &error_message)
   {
     char *value = nullptr;
@@ -211,11 +216,9 @@ namespace csb::utility
     std::filesystem::path clang_path = std::format("build\\clang-{}", clang_version);
     if (std::filesystem::exists(clang_path)) return clang_path.string();
 
-    std::string architecture = utility::get_environment_variable(
-      "VSCMD_ARG_HOST_ARCH", "Ensure you are running from an environment with access to MSVC tools.");
-    if (architecture != "x64" && architecture != "arm64")
+    if (state.architecture != "x64" && state.architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
-    std::string clang_architecture = architecture == "x64" ? "x86_64" : "aarch64";
+    std::string clang_architecture = state.architecture == "x64" ? "x86_64" : "aarch64";
     std::string url = std::format(
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-{}-pc-windows-msvc.tar.xz",
       clang_version, clang_version, clang_architecture);
@@ -225,7 +228,8 @@ namespace csb::utility
     std::cout << "Extracting archive... ";
     utility::live_execute("tar -xf build\\temp.tar.xz -C build", "Failed to extract archive.", false);
     std::filesystem::remove("build\\temp.tar.xz");
-    std::filesystem::path extracted_path = std::format("build\\clang+llvm-{}-x86_64-pc-windows-msvc", clang_version);
+    std::filesystem::path extracted_path =
+      std::format("build\\clang+llvm-{}-{}-pc-windows-msvc", clang_version, clang_architecture);
     if (!std::filesystem::exists(extracted_path))
       throw std::runtime_error("Failed to find " + extracted_path.string() + ".");
 
@@ -248,24 +252,24 @@ namespace csb
   inline warning warning_level = W4;
   inline linkage linkage_type = STATIC;
   inline configuration build_configuration = RELEASE;
-  inline console console_type = CONSOLE;
+  inline subsystem subsystem_type = CONSOLE;
 
-  inline std::set<std::filesystem::path> source_files = {};
   inline std::set<std::filesystem::path> include_directories = {};
+  inline std::set<std::filesystem::path> source_files = {};
   inline std::set<std::filesystem::path> external_include_directories = {};
   inline std::set<std::filesystem::path> library_directories = {};
   inline std::set<std::string> libraries = {};
   inline std::set<std::string> definitions = {};
 
   inline std::string clang_version = {};
-  inline std::string vcpkg_version = {};
+
   struct vcpkg_output
   {
     std::filesystem::path include_directory = {};
     std::filesystem::path library_directory = {};
   };
 
-  inline vcpkg_output fetch_vcpkg_dependencies()
+  inline vcpkg_output vcpkg_install(const std::string &vcpkg_version)
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (!std::filesystem::exists("vcpkg.json")) throw std::runtime_error("vcpkg.json not found.");
@@ -273,9 +277,7 @@ namespace csb
     std::filesystem::path vcpkg_path = "build\\vcpkg\\vcpkg.exe";
     utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
 
-    std::string architecture = utility::get_environment_variable(
-      "VSCMD_ARG_HOST_ARCH", "Ensure you are running from an environment with access to MSVC tools.");
-    std::string vcpkg_triplet = architecture + "-windows" + (linkage_type == STATIC ? "-static" : "") +
+    std::string vcpkg_triplet = utility::state.architecture + "-windows" + (linkage_type == STATIC ? "-static" : "") +
                                 (build_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
@@ -292,29 +294,7 @@ namespace csb
     return outputs;
   }
 
-  inline void clang_format()
-  {
-    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
-    if (source_files.empty() && include_directories.empty()) throw std::runtime_error("No files to format.");
-
-    std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
-    std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
-
-    std::set<std::filesystem::path> format_files = source_files;
-    for (auto iterator = include_directories.begin(); iterator != include_directories.end(); ++iterator)
-      for (const auto &entry : std::filesystem::recursive_directory_iterator(*iterator))
-        if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
-          format_files.insert(entry.path());
-
-    utility::multi_execute(
-      std::format("{} -i \"[.string]\"", clang_format_path.string()), format_files, "Formatting",
-      [](const std::string &item_command, const std::string result)
-      { std::cout << item_command + "\n" + result + "\n"; },
-      [](const std::string item_command, const int return_code, const std::string &result)
-      { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
-  }
-
-  inline void generate_compile_commands()
+  inline void clang_compile_commands()
   {
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
 
@@ -377,6 +357,28 @@ namespace csb
     std::cout << "Generated " << compile_commands_path.string() + "\n" << std::endl;
   }
 
+  inline void clang_format()
+  {
+    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
+    if (source_files.empty() && include_directories.empty()) throw std::runtime_error("No files to format.");
+
+    std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
+    std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
+
+    std::set<std::filesystem::path> format_files = source_files;
+    for (auto iterator = include_directories.begin(); iterator != include_directories.end(); ++iterator)
+      for (const auto &entry : std::filesystem::recursive_directory_iterator(*iterator))
+        if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
+          format_files.insert(entry.path());
+
+    utility::multi_execute(
+      std::format("{} -i \"[.string]\"", clang_format_path.string()), format_files, "Formatting",
+      [](const std::string &item_command, const std::string result)
+      { std::cout << item_command + "\n" + result + "\n"; },
+      [](const std::string item_command, const int return_code, const std::string &result)
+      { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
+  }
+
   inline void build()
   {
     if (name.empty()) throw std::runtime_error("Executable name not set.");
@@ -409,10 +411,8 @@ namespace csb
       [](const std::string item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
 
-    std::string architecture = utility::get_environment_variable(
-      "VSCMD_ARG_TGT_ARCH", "Ensure you are running from an environment with access to MSVC tools.");
     std::string executable_option = output_type == STATIC_LIBRARY ? "lib" : "link";
-    std::string console_option = console_type == CONSOLE ? "CONSOLE" : "WINDOWS";
+    std::string console_option = subsystem_type == CONSOLE ? "CONSOLE" : "WINDOWS";
     std::string link_debug_flags = build_configuration == RELEASE  ? ""
                                    : output_type == STATIC_LIBRARY ? ""
                                                                    : "/DEBUG:FULL ";
@@ -433,9 +433,10 @@ namespace csb
     for (const auto &source_file : source_files)
       link_objects += std::format("{}{}.obj ", build_directory, source_file.stem().string());
     utility::execute(
-      std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option, architecture,
-                  dynamic_flags, console_option, link_debug_flags, link_library_directories, link_libraries,
-                  link_objects, extra_flags, build_directory, name, extension),
+      std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
+                  utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
+                  link_library_directories, link_libraries, link_objects, extra_flags, build_directory, name,
+                  extension),
       [&](const std::string &command, const std::string &result) { std::cout << command + "\n" + result; },
       [&](const std::string &command, const int return_code, const std::string &result)
       {
@@ -449,12 +450,12 @@ namespace csb
   int main()                                                                                                           \
   {                                                                                                                    \
     const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";         \
-    const std::string architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH", error_message);     \
     const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);                 \
     const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);       \
     const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);        \
-    std::cout << std::format("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n", architecture,      \
-                             vs_path, toolset_version, sdk_version)                                                    \
+    csb::utility::state.architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH", error_message);   \
+    std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}\n", vs_path,           \
+                             toolset_version, sdk_version, csb::utility::state.architecture)                           \
               << std::endl;                                                                                            \
     try                                                                                                                \
     {                                                                                                                  \
