@@ -23,6 +23,12 @@
   #include <stdlib.h>
 #endif
 
+enum output
+{
+  EXECUTABLE,
+  STATIC_LIBRARY,
+  DYNAMIC_LIBRARY
+};
 enum standard
 {
   CXX11 = 11,
@@ -63,20 +69,21 @@ enum console
 
 namespace csb::utility
 {
-  inline std::string get_environment_variable(const std::string &name)
+  inline std::string get_environment_variable(const std::string &name, const std::string &error_message)
   {
     char *value = nullptr;
     size_t len = 0;
     if (_dupenv_s(&value, &len, name.c_str()) != 0 || !value)
-      throw std::runtime_error(name + " environment variable not found.");
+      throw std::runtime_error(error_message + "\n" + name + " environment variable not found.");
     std::string result = std::string(value);
     free(value);
     if (result.empty()) throw std::runtime_error(name + " environment variable is empty.");
     return result;
   }
 
-  inline void execute(const std::string &command, std::function<void(const std::string &)> on_success = nullptr,
-                      std::function<void(const int, const std::string &)> on_failure = nullptr)
+  inline void execute(const std::string &command,
+                      std::function<void(const std::string &, const std::string &)> on_success = nullptr,
+                      std::function<void(const std::string &, const int, const std::string &)> on_failure = nullptr)
   {
     FILE *pipe = _popen((command).c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
@@ -86,10 +93,10 @@ namespace csb::utility
     int return_code = _pclose(pipe);
     if (return_code != 0)
     {
-      if (on_failure) on_failure(return_code, result);
+      if (on_failure) on_failure(command, return_code, result);
       return;
     }
-    if (on_success) on_success(result);
+    if (on_success) on_success(command, result);
   }
 
   template <typename container_type>
@@ -101,7 +108,7 @@ namespace csb::utility
   template <iterable container_type>
   void multi_execute(const std::string &command, const container_type &container, const std::string &task_name,
                      std::function<void(const std::string &, const std::string &)> on_success = nullptr,
-                     std::function<void(const int, const std::string &, const std::string &)> on_failure = nullptr)
+                     std::function<void(const std::string &, const int, const std::string &)> on_failure = nullptr)
   {
     std::vector<std::exception_ptr> exceptions = {};
     std::mutex exceptions_mutex = {};
@@ -136,11 +143,11 @@ namespace csb::utility
                     if (return_code != 0)
                     {
                       should_stop = true;
-                      if (on_failure) on_failure(return_code, result, item_command);
+                      if (on_failure) on_failure(item_command, return_code, result);
                     }
                     else if (on_success)
                     {
-                      if (on_success) on_success(result, item_command);
+                      if (on_success) on_success(item_command, result);
                     }
                   });
     if (!exceptions.empty())
@@ -158,8 +165,9 @@ namespace csb::utility
     if (should_stop) throw std::runtime_error(task_name + " errors occurred.");
   }
 
-  inline void live_execute(const std::string &command, const std::string &error_message)
+  inline void live_execute(const std::string &command, const std::string &error_message, bool print_command)
   {
+    if (print_command) std::cout << command << std::endl;
     if (std::system(command.c_str()) != 0) throw std::runtime_error(error_message);
   }
 
@@ -181,7 +189,7 @@ namespace csb::utility
     std::cout << "Bootstrapping vcpkg... ";
     utility::execute(
       "cd " + vcpkg_path.parent_path().string() + " && bootstrap-vcpkg.bat -disableMetrics",
-      [](const std::string &result)
+      [](const std::string &, const std::string &result)
       {
         std::cout << "done." << std::endl;
         size_t start = result.find("https://");
@@ -191,7 +199,7 @@ namespace csb::utility
           if (end != std::string::npos) std::cout << result.substr(start, end - start) << std::endl;
         }
       },
-      [](const int return_code, const std::string &result)
+      [](const std::string &, const int return_code, const std::string &result)
       {
         std::cerr << result << std::endl;
         throw std::runtime_error("Failed to bootstrap vcpkg. Return code: " + std::to_string(return_code));
@@ -207,9 +215,10 @@ namespace csb::utility
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-x86_64-pc-windows-msvc.tar.xz",
       clang_version, clang_version);
     std::cout << "Downloading archive at '" + url + "'..." << std::endl;
-    utility::live_execute(std::format("curl -f -L -o build\\temp.tar.xz {}", url), "Failed to download archive.");
+    utility::live_execute(std::format("curl -f -L -o build\\temp.tar.xz {}", url), "Failed to download archive.",
+                          false);
     std::cout << "Extracting archive... ";
-    utility::live_execute("tar -xf build\\temp.tar.xz -C build", "Failed to extract archive.");
+    utility::live_execute("tar -xf build\\temp.tar.xz -C build", "Failed to extract archive.", false);
     std::filesystem::remove("build\\temp.tar.xz");
     std::filesystem::path extracted_path = std::format("build\\clang+llvm-{}-x86_64-pc-windows-msvc", clang_version);
     if (!std::filesystem::exists(extracted_path))
@@ -228,6 +237,7 @@ namespace csb::utility
 namespace csb
 {
   inline std::string name = "a";
+  inline output output_type = EXECUTABLE;
   inline standard cxx_standard = CXX20;
   inline optimization optimization_level = O2;
   inline warning warning_level = W4;
@@ -242,12 +252,15 @@ namespace csb
   inline std::set<std::string> libraries = {};
   inline std::set<std::string> definitions = {};
 
+  inline std::string clang_version = {};
+  inline std::string vcpkg_version = {};
   struct vcpkg_outputs
   {
     std::filesystem::path include_directory = {};
     std::filesystem::path library_directory = {};
   };
-  inline vcpkg_outputs fetch_vcpkg_dependencies(const std::string &vcpkg_version)
+
+  inline vcpkg_outputs fetch_vcpkg_dependencies()
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (!std::filesystem::exists("vcpkg.json")) throw std::runtime_error("vcpkg.json not found.");
@@ -255,7 +268,8 @@ namespace csb
     std::filesystem::path vcpkg_path = "build\\vcpkg\\vcpkg.exe";
     utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
 
-    std::string architecture = utility::get_environment_variable("VSCMD_ARG_HOST_ARCH");
+    std::string architecture = utility::get_environment_variable(
+      "VSCMD_ARG_HOST_ARCH", "Ensure you are running from an environment with access to MSVC tools.");
     std::string vcpkg_triplet = architecture + "-windows" + (linkage_type == STATIC ? "-static" : "") +
                                 (build_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
@@ -263,7 +277,7 @@ namespace csb
     utility::live_execute(
       std::format("cd {} && vcpkg.exe install --vcpkg-root . --triplet {} --x-install-root ..\\..\\{}",
                   vcpkg_path.parent_path().string(), vcpkg_triplet, vcpkg_installed_directory.string()),
-      "Failed to install vcpkg dependencies.");
+      "Failed to install vcpkg dependencies.", false);
 
     vcpkg_outputs outputs = {vcpkg_installed_directory / vcpkg_triplet / "include",
                              vcpkg_installed_directory / vcpkg_triplet /
@@ -272,6 +286,28 @@ namespace csb
       throw std::runtime_error("vcpkg outputs not found.");
     std::cout << std::endl;
     return outputs;
+  }
+
+  inline void clang_format()
+  {
+    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
+    if (source_files.empty() && include_directories.empty()) throw std::runtime_error("No files to format.");
+
+    std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
+    std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
+
+    std::set<std::filesystem::path> format_files = source_files;
+    for (auto iterator = include_directories.begin(); iterator != include_directories.end(); ++iterator)
+      for (const auto &entry : std::filesystem::recursive_directory_iterator(*iterator))
+        if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
+          format_files.insert(entry.path());
+
+    utility::multi_execute(
+      std::format("{} -i \"[.string]\"", clang_format_path.string()), format_files, "Formatting",
+      [](const std::string &item_command, const std::string result)
+      { std::cout << item_command + "\n" + result + "\n"; },
+      [](const std::string item_command, const int return_code, const std::string &result)
+      { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
   }
 
   inline void generate_compile_commands()
@@ -337,43 +373,18 @@ namespace csb
     std::cout << "Generated " << compile_commands_path.string() + "\n" << std::endl;
   }
 
-  inline void clang_format(const std::string &clang_version)
-  {
-    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
-    if (source_files.empty() && include_directories.empty()) throw std::runtime_error("No files to format.");
-
-    std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
-    std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
-
-    std::set<std::filesystem::path> format_files = source_files;
-    for (auto iterator = include_directories.begin(); iterator != include_directories.end(); ++iterator)
-      for (const auto &entry : std::filesystem::recursive_directory_iterator(*iterator))
-        if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
-          format_files.insert(entry.path());
-
-    utility::multi_execute(
-      std::format("{} -i \"[.string]\"", clang_format_path.string()), format_files, "Formatting",
-      [](const std::string &result, const std::string item_command)
-      { std::cout << item_command + "\n" + result + "\n"; },
-      [](const int return_code, const std::string &result, const std::string item_command)
-      { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
-  }
-
   inline void build()
   {
     if (name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
 
     std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
-    std::string runtime_library = linkage_type == STATIC ? (build_configuration == RELEASE ? "MT" : "MTd")
-                                                         : (build_configuration == RELEASE ? "MD" : "MDd");
-    std::string compile_debug_flags = build_configuration == RELEASE ? "" : "/Zi /RTC1 ";
-    std::string link_debug_flags = build_configuration == RELEASE ? "" : "/DEBUG ";
-    std::string optimization_option = optimization_level == O0 ? "d" : std::to_string(optimization_level);
-    std::string console_option = console_type == CONSOLE ? "CONSOLE" : "WINDOWS";
-
     if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
 
+    std::string compile_debug_flags = build_configuration == RELEASE ? "" : "/Zi /RTC1 ";
+    std::string runtime_library = linkage_type == STATIC ? (build_configuration == RELEASE ? "MT" : "MTd")
+                                                         : (build_configuration == RELEASE ? "MD" : "MDd");
+    std::string optimization_option = optimization_level == O0 ? "d" : std::to_string(optimization_level);
     std::string compile_definitions = {};
     for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
     std::string compile_include_directories = {};
@@ -384,16 +395,31 @@ namespace csb
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
     utility::multi_execute(
       std::format(
-        "cl /nologo /std:c++{} /O{} /W{} /external:W0 /EHsc /MP /FS /{} /ifcOutput{} /Fo{} /Fd{}[.stem.string].pdb "
+        "cl /nologo /std:c++{} /O{} /W{} /external:W0 /EHsc /MP /{} /ifcOutput{} /Fo{} /Fd{}[.stem.string].pdb "
         "/sourceDependencies{}[.stem.string].d.json {}/DWIN32 /D_WINDOWS {}{}{}/c \"[.string]\"",
         std::to_string(cxx_standard), optimization_option, std::to_string(warning_level), runtime_library,
         build_directory, build_directory, build_directory, build_directory, compile_debug_flags, compile_definitions,
         compile_include_directories, compile_external_include_directories),
-      source_files, "Compilation", [](const std::string &result, const std::string item_command)
+      source_files, "Compilation", [](const std::string &item_command, const std::string result)
       { std::cout << item_command + "\n" + result + "\n"; },
-      [](const int return_code, const std::string &result, const std::string item_command)
+      [](const std::string item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
 
+    std::string architecture = utility::get_environment_variable(
+      "VSCMD_ARG_TGT_ARCH", "Ensure you are running from an environment with access to MSVC tools.");
+    std::string executable_option = output_type == STATIC_LIBRARY ? "lib" : "link";
+    std::string console_option = console_type == CONSOLE ? "CONSOLE" : "WINDOWS";
+    std::string link_debug_flags = build_configuration == RELEASE  ? ""
+                                   : output_type == STATIC_LIBRARY ? ""
+                                                                   : "/DEBUG:FULL ";
+    std::string dynamic_flags = output_type == DYNAMIC_LIBRARY ? "/DLL /MANIFEST:EMBED /INCREMENTAL:NO "
+                                : output_type == EXECUTABLE    ? "/MANIFEST:EMBED /INCREMENTAL:NO "
+                                                               : "";
+    std::string extra_flags = output_type == DYNAMIC_LIBRARY ? std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ",
+                                                                           build_directory, name, build_directory, name)
+                              : output_type == EXECUTABLE    ? std::format("/PDB:{}{}.pdb ", build_directory, name)
+                                                             : "";
+    std::string extension = output_type == STATIC_LIBRARY ? "lib" : output_type == DYNAMIC_LIBRARY ? "dll" : "exe";
     std::string link_library_directories = {};
     for (const auto &directory : library_directories)
       link_library_directories += std::format("/LIBPATH:\"{}\" ", directory.string());
@@ -402,15 +428,14 @@ namespace csb
     std::string link_objects = {};
     for (const auto &source_file : source_files)
       link_objects += std::format("{}{}.obj ", build_directory, source_file.stem().string());
-    std::string link_command =
-      std::format("link /NOLOGO /MANIFEST:EMBED /INCREMENTAL:NO /SUBSYSTEM:{} {}{}{}{}/PDB:{}{}.pdb /OUT:{}{}.exe",
-                  console_option, link_debug_flags, link_library_directories, link_libraries, link_objects,
-                  build_directory, name, build_directory, name);
     utility::execute(
-      link_command, [&](const std::string &result) { std::cout << link_command + "\n" + result; },
-      [&](const int return_code, const std::string &result)
+      std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option, architecture,
+                  dynamic_flags, console_option, link_debug_flags, link_library_directories, link_libraries,
+                  link_objects, extra_flags, build_directory, name, extension),
+      [&](const std::string &command, const std::string &result) { std::cout << command + "\n" + result; },
+      [&](const std::string &command, const int return_code, const std::string &result)
       {
-        std::cerr << link_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         throw std::runtime_error("Linking errors occurred.");
       });
   }
@@ -419,10 +444,11 @@ namespace csb
 #define CSB_MAIN()                                                                                                     \
   int main()                                                                                                           \
   {                                                                                                                    \
-    std::string architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH");                          \
-    std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR");                                      \
-    std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion");                            \
-    std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion");                             \
+    const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";         \
+    const std::string architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH", error_message);     \
+    const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);                 \
+    const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);       \
+    const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);        \
     std::cout << std::format("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n", architecture,      \
                              vs_path, toolset_version, sdk_version)                                                    \
               << std::endl;                                                                                            \
