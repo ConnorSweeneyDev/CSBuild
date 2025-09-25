@@ -463,13 +463,13 @@ namespace csb
 
     std::filesystem::path compile_commands_path = "compile_commands.json";
     std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
-    std::string content = std::format(
-      "[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
-      "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align "
-      "-Wfloat-equal -Wparentheses -Wunreachable-code-aggressive -Wformat=2\"\n  }},\n",
-      escape_backslashes(std::filesystem::current_path().string()),
-      escape_backslashes((std::filesystem::current_path() / std::filesystem::path("csb.cpp")).string()),
-      cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard));
+    std::string content =
+      std::format("[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
+                  "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
+                  "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2\"\n  }},\n",
+                  escape_backslashes(std::filesystem::current_path().string()),
+                  escape_backslashes((std::filesystem::current_path() / std::filesystem::path("csb.cpp")).string()),
+                  cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard));
     for (auto iterator = source_files.begin(); iterator != source_files.end();)
     {
       content += "  {\n";
@@ -477,11 +477,10 @@ namespace csb
         std::format("    \"directory\": \"{}\",\n", escape_backslashes(std::filesystem::current_path().string()));
       content +=
         std::format("    \"file\": \"{}\",\n", escape_backslashes(std::filesystem::absolute(*iterator).string()));
-      content += std::format(
-        "    \"command\": \"clang++ -std=c++{} -Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated "
-        "-Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal -Wparentheses -Wunreachable-code-aggressive -Wformat=2 "
-        "-DWIN32 -D_WINDOWS ",
-        std::to_string(cxx_standard));
+      content += std::format("    \"command\": \"clang++ -std=c++{} -Wall -Wextra -Wpedantic -Wconversion -Wshadow-all "
+                             "-Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal "
+                             "-Wunreachable-code-aggressive -Wformat=2 -DWIN32 -D_WINDOWS ",
+                             std::to_string(cxx_standard));
       for (const auto &definition : definitions) content += std::format("-D{} ", definition);
       for (const auto &directory : include_directories)
         content += std::format("-I\\\"{}\\\" ", escape_backslashes(directory.string()));
