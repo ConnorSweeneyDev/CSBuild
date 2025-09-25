@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -81,6 +82,63 @@ namespace csb::utility
     return result;
   }
 
+  inline std::string path_placeholder_replace(const std::filesystem::path &path, const std::string &placeholder)
+  {
+    std::string result = placeholder;
+    size_t pos = 0;
+
+    while ((pos = result.find("[[", pos)) != std::string::npos)
+    {
+      result.replace(pos, 2, "[");
+      pos += 1;
+    }
+    pos = 0;
+    while ((pos = result.find("]]", pos)) != std::string::npos)
+    {
+      result.replace(pos, 2, "]");
+      pos += 1;
+    }
+
+    pos = 0;
+    while ((pos = result.find("[", pos)) != std::string::npos)
+    {
+      size_t end_pos = result.find("]", pos);
+      if (end_pos == std::string::npos) break;
+
+      std::string placeholder_content = result.substr(pos + 1, end_pos - pos - 1);
+      std::filesystem::path current_path = path;
+
+      if (!placeholder_content.empty())
+      {
+        size_t method_start = 0;
+        size_t method_end = 0;
+        while (method_end != std::string::npos)
+        {
+          method_end = placeholder_content.find(".", method_start);
+          std::string method = placeholder_content.substr(
+            method_start, method_end == std::string::npos ? std::string::npos : method_end - method_start);
+          if (!method.empty())
+          {
+            if (method == "filename")
+              current_path = current_path.filename();
+            else if (method == "stem")
+              current_path = current_path.stem();
+            else if (method == "extension")
+              current_path = current_path.extension();
+            else if (method == "parent_path")
+              current_path = current_path.parent_path();
+          }
+          method_start = method_end + 1;
+        }
+      }
+
+      std::string replacement = current_path.string();
+      result.replace(pos, end_pos - pos + 1, replacement);
+      pos += replacement.length();
+    }
+    return result;
+  }
+
   inline void execute(const std::string &command,
                       std::function<void(const std::string &, const std::string &)> on_success = nullptr,
                       std::function<void(const std::string &, const int, const std::string &)> on_failure = nullptr)
@@ -116,18 +174,7 @@ namespace csb::utility
     std::for_each(std::execution::par, container.begin(), container.end(),
                   [&](const auto &item)
                   {
-                    std::string item_command = command;
-                    auto replace_placeholder = [&](const std::string &placeholder, const std::string &replacement)
-                    {
-                      size_t pos = 0;
-                      while ((pos = item_command.find(placeholder, pos)) != std::string::npos)
-                      {
-                        item_command.replace(pos, placeholder.length(), replacement);
-                        pos += replacement.length();
-                      }
-                    };
-                    replace_placeholder("[.string]", item.string());
-                    replace_placeholder("[.stem.string]", item.stem().string());
+                    std::string item_command = path_placeholder_replace(item, command);
                     FILE *pipe = _popen((item_command + " 2>&1").c_str(), "r");
                     if (!pipe)
                     {
@@ -169,6 +216,65 @@ namespace csb::utility
   {
     if (print_command) std::cout << command << std::endl;
     if (std::system(command.c_str()) != 0) throw std::runtime_error(error_message);
+  }
+
+  inline std::set<std::filesystem::path> find_modified_files(
+    const std::set<std::filesystem::path> &target_files, const std::filesystem::path &check_directory,
+    const std::vector<std::string> &check_extensions,
+    const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+      &dependency_handler = nullptr)
+  {
+    std::set<std::filesystem::path> modified_files = {};
+    for (const auto &file : target_files)
+    {
+      std::vector<std::filesystem::path> check_files;
+      bool any_missing = false;
+      for (const auto &extension : check_extensions)
+      {
+        std::filesystem::path check_path = check_directory / path_placeholder_replace(file, extension);
+        if (!std::filesystem::exists(check_path))
+        {
+          any_missing = true;
+          break;
+        }
+        check_files.push_back(check_path);
+      }
+      if (any_missing)
+      {
+        modified_files.insert(file);
+        continue;
+      }
+
+      auto source_time = std::filesystem::last_write_time(file);
+      bool needs_rebuild = false;
+      for (const auto &check_file : check_files)
+      {
+        auto check_time = std::filesystem::last_write_time(check_file);
+        if (source_time > check_time)
+        {
+          needs_rebuild = true;
+          break;
+        }
+      }
+      if (needs_rebuild)
+      {
+        modified_files.insert(file);
+        continue;
+      }
+
+      if (dependency_handler)
+      {
+        try
+        {
+          if (dependency_handler(file, check_files)) modified_files.insert(file);
+        }
+        catch (const std::exception &)
+        {
+          modified_files.insert(file);
+        }
+      }
+    }
+    return modified_files;
   }
 
   inline void bootstrap_vcpkg(const std::filesystem::path &vcpkg_path, const std::string &vcpkg_version)
@@ -276,7 +382,7 @@ namespace csb::utility
     for (const auto &entry : std::filesystem::directory_iterator(extracted_path / "bin"))
       if (entry.is_regular_file()) std::filesystem::rename(entry.path(), clang_path / entry.path().filename());
     std::filesystem::remove_all(extracted_path);
-    std::cout << "done.\n" << std::endl;
+    std::cout << "done." << std::endl;
 
     return clang_path;
   }
@@ -312,6 +418,7 @@ namespace csb
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (vcpkg_dependencies.empty()) throw std::runtime_error("No vcpkg dependencies provided.");
+    std::cout << std::endl;
 
     std::filesystem::path vcpkg_path = "build\\vcpkg\\vcpkg.exe";
     utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
@@ -331,13 +438,15 @@ namespace csb
                               (build_configuration == RELEASE ? "lib" : "debug/lib")};
     if (!std::filesystem::exists(outputs.include_directory) || !std::filesystem::exists(outputs.library_directory))
       throw std::runtime_error("vcpkg outputs not found.");
-    std::cout << std::endl;
     return outputs;
   }
 
   inline void clang_compile_commands()
   {
+    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
+    std::cout << std::endl;
+    std::cout << "Generating compile_commands.json... ";
 
     auto escape_backslashes = [](const std::string &string) -> std::string
     {
@@ -351,8 +460,6 @@ namespace csb
       }
       return result;
     };
-
-    std::cout << "Generating compile_commands.json... ";
 
     std::filesystem::path compile_commands_path = "compile_commands.json";
     std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
@@ -396,13 +503,16 @@ namespace csb
       throw std::runtime_error("Failed to open compile_commands.json file for writing.");
     compile_commands_file << content;
     compile_commands_file.close();
-    std::cout << "done.\n" << std::endl;
+    std::cout << "done." << std::endl;
   }
 
   inline void clang_format()
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty() && include_directories.empty()) throw std::runtime_error("No files to format.");
+
+    std::filesystem::path format_directory = "build\\format\\";
+    if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
 
     std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
     std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
@@ -413,11 +523,23 @@ namespace csb
         if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
           format_files.insert(entry.path());
 
+    auto modified_files = utility::find_modified_files(format_files, format_directory, {"[.filename].formatted"});
     utility::multi_execute(
-      std::format("{} -i \"[.string]\"", clang_format_path.string()), format_files, "Formatting",
-      [](const std::string &item_command, const std::string result)
-      { std::cout << item_command + "\n" + result + "\n"; },
-      [](const std::string item_command, const int return_code, const std::string &result)
+      std::format("{} -i \"[]\"", clang_format_path.string()), modified_files, "Formatting",
+      [&](const std::string &item_command, const std::string &result)
+      {
+        std::cout << "\n" + item_command + "\n" + result;
+        std::filesystem::path item_path = item_command.substr(item_command.find("\"") + 1);
+        item_path = item_path.string().substr(0, item_path.string().rfind("\""));
+        std::filesystem::path formatted_path = format_directory / item_path.filename().string().append(".formatted");
+        std::ofstream formatted_file(formatted_path);
+        if (formatted_file.is_open())
+        {
+          formatted_file << "Formatted by clang-format.\n";
+          formatted_file.close();
+        }
+      },
+      [](const std::string &item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
   }
 
@@ -440,15 +562,54 @@ namespace csb
     std::string compile_external_include_directories = {};
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
+
+    auto modified_files = utility::find_modified_files(
+      source_files, build_directory, {"[.filename.stem].obj", "[.filename.stem].d"},
+      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &check_files) -> bool
+      {
+        auto object_time = std::filesystem::last_write_time(check_files[0]);
+        std::filesystem::path dependency_path = check_files[1];
+
+        std::ifstream dependency_file(dependency_path);
+        if (!dependency_file.is_open()) return true;
+        std::string json_content((std::istreambuf_iterator<char>(dependency_file)), std::istreambuf_iterator<char>());
+        dependency_file.close();
+
+        size_t includes_start = json_content.find("\"Includes\": [");
+        if (includes_start == std::string::npos)
+        {
+          std::cout << "3" << std::endl;
+          return true;
+        }
+        size_t includes_end = json_content.find("]", includes_start);
+        if (includes_end == std::string::npos) return true;
+
+        std::string includes_section = json_content.substr(includes_start + 13, includes_end - includes_start - 13);
+        size_t pos = 0;
+        while ((pos = includes_section.find("\"", pos)) != std::string::npos)
+        {
+          size_t start = pos + 1;
+          size_t end = includes_section.find("\"", start);
+          if (end == std::string::npos) break;
+          std::filesystem::path include_path = includes_section.substr(start, end - start);
+          if (std::filesystem::exists(include_path))
+          {
+            auto include_time = std::filesystem::last_write_time(include_path);
+            if (include_time > object_time) return true;
+          }
+          pos = end + 1;
+        }
+        return false;
+      });
     utility::multi_execute(
       std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{} /Fo{} "
-                  "/Fd{}[.stem.string].pdb /sourceDependencies{}[.stem.string].d.json {}{}/c \"[.string]\"",
+                  "/Fd{}[.stem].pdb /sourceDependencies{}[.stem].d {}{}/c \"[]\"",
                   std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
                   compile_definitions, build_directory, build_directory, build_directory, build_directory,
                   compile_include_directories, compile_external_include_directories),
-      source_files, "Compilation", [](const std::string &item_command, const std::string result)
-      { std::cout << item_command + "\n" + result + "\n"; },
-      [](const std::string item_command, const int return_code, const std::string &result)
+      modified_files, "Compilation", [](const std::string &item_command, const std::string &result)
+      { std::cout << "\n" + item_command + "\n" + result; },
+      [](const std::string &item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
 
     std::string executable_option = output_type == STATIC_LIBRARY ? "lib" : "link";
@@ -472,17 +633,18 @@ namespace csb
     std::string link_objects = {};
     for (const auto &source_file : source_files)
       link_objects += std::format("{}{}.obj ", build_directory, source_file.stem().string());
-    utility::execute(
-      std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
-                  utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                  link_library_directories, link_libraries, link_objects, extra_flags, build_directory, name,
-                  extension),
-      [&](const std::string &command, const std::string &result) { std::cout << command + "\n" + result; },
-      [&](const std::string &command, const int return_code, const std::string &result)
-      {
-        std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-        throw std::runtime_error("Linking errors occurred.");
-      });
+    if (!std::filesystem::exists(build_directory + name + "." + extension) || !modified_files.empty())
+      utility::execute(
+        std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
+                    utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
+                    link_library_directories, link_libraries, link_objects, extra_flags, build_directory, name,
+                    extension),
+        [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
+        [&](const std::string &command, const int return_code, const std::string &result)
+        {
+          std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          throw std::runtime_error("Linking errors occurred.");
+        });
   }
 }
 
@@ -494,7 +656,7 @@ namespace csb
     const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);       \
     const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);        \
     csb::utility::state.architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH", error_message);   \
-    std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}\n", vs_path,           \
+    std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}", vs_path,             \
                              toolset_version, sdk_version, csb::utility::state.architecture)                           \
               << std::endl;                                                                                            \
     try                                                                                                                \

@@ -5,7 +5,7 @@ A zero dependency, cross-platform build system for C++ projects.
 - [x] **Zero Dependencies**: All you need is a C++ compiler and Git.
 - [ ] **Cross-Platform**: Works on both Windows and Linux.
 - [x] **Simple Configuration**: Uses a `csb.cpp` file in the root for configuration.
-- [ ] **Automatic Incremental Builds**: Dependencies are tracked, and only changed files are formatted and built.
+- [x] **Automatic Incremental Builds**: Dependencies are tracked, and only affected steps are re-run.
 - [ ] **Multi-Project Support**: Easily use other projects that use CSBuild as a build system.
 - [ ] **Custom Build Steps**: Define custom build steps for specialized tasks.
 - [x] **VCPKG Integration**: Integrates with VCPKG for package management.
