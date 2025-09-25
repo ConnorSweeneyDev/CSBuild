@@ -8,7 +8,6 @@ int csb_main()
   csb::name = "test";
   csb::output_type = EXECUTABLE;
   csb::cxx_standard = CXX20;
-  csb::optimization_level = O2;
   csb::warning_level = W4;
   csb::linkage_type = STATIC;
   csb::build_configuration = RELEASE;

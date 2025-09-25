@@ -38,12 +38,6 @@ enum standard
   CXX20 = 20,
   CXX23 = 23
 };
-enum optimization
-{
-  O0 = 0,
-  O1 = 1,
-  O2 = 2,
-};
 enum warning
 {
   W0 = 0,
@@ -293,7 +287,6 @@ namespace csb
   inline std::string name = "a";
   inline output output_type = EXECUTABLE;
   inline standard cxx_standard = CXX20;
-  inline optimization optimization_level = O2;
   inline warning warning_level = W4;
   inline linkage linkage_type = STATIC;
   inline configuration build_configuration = RELEASE;
@@ -436,10 +429,9 @@ namespace csb
     std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
     if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
 
-    std::string compile_debug_flags = build_configuration == RELEASE ? "" : "/Zi /RTC1 ";
+    std::string compile_debug_flags = build_configuration == RELEASE ? "/O2 " : "/O0 /Zi /RTC1 ";
     std::string runtime_library = linkage_type == STATIC ? (build_configuration == RELEASE ? "MT" : "MTd")
                                                          : (build_configuration == RELEASE ? "MD" : "MDd");
-    std::string optimization_option = optimization_level == O0 ? "d" : std::to_string(optimization_level);
     std::string compile_definitions = {};
     for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
     std::string compile_include_directories = {};
@@ -449,12 +441,11 @@ namespace csb
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
     utility::multi_execute(
-      std::format(
-        "cl /nologo /std:c++{} /O{} /W{} /external:W0 /EHsc /MP /{} /ifcOutput{} /Fo{} /Fd{}[.stem.string].pdb "
-        "/sourceDependencies{}[.stem.string].d.json {}/DWIN32 /D_WINDOWS {}{}{}/c \"[.string]\"",
-        std::to_string(cxx_standard), optimization_option, std::to_string(warning_level), runtime_library,
-        build_directory, build_directory, build_directory, build_directory, compile_debug_flags, compile_definitions,
-        compile_include_directories, compile_external_include_directories),
+      std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{} /Fo{} "
+                  "/Fd{}[.stem.string].pdb /sourceDependencies{}[.stem.string].d.json {}{}/c \"[.string]\"",
+                  std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
+                  compile_definitions, build_directory, build_directory, build_directory, build_directory,
+                  compile_include_directories, compile_external_include_directories),
       source_files, "Compilation", [](const std::string &item_command, const std::string result)
       { std::cout << item_command + "\n" + result + "\n"; },
       [](const std::string item_command, const int return_code, const std::string &result)
