@@ -663,9 +663,9 @@ namespace csb
     {                                                                                                                  \
       return csb_main();                                                                                               \
     }                                                                                                                  \
-    catch (const std::exception &e)                                                                                    \
+    catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
-      std::cerr << "Error: " << e.what() << std::endl;                                                                 \
+      std::cerr << "Error: " << exception.what() << std::endl;                                                         \
       return EXIT_FAILURE;                                                                                             \
     }                                                                                                                  \
   }
