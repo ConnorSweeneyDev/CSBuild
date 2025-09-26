@@ -2,7 +2,7 @@
 A zero dependency, cross-platform build system for C++ projects.
 
 ## Features
-- [x] **Zero Dependencies**: All you need is a C++ compiler and Git.
+- [x] **Zero Dependencies**: All you need is a C++ compiler (>=20) and Git.
 - [ ] **Cross-Platform**: Works on both Windows and Linux.
 - [x] **Simple Configuration**: Uses a `csb.cpp` file in the root for configuration.
 - [x] **Automatic Incremental Builds**: Dependencies are tracked, and only affected steps are re-run.

@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -25,7 +26,7 @@
   #include <stdlib.h>
 #endif
 
-enum output
+enum artifact
 {
   EXECUTABLE,
   STATIC_LIBRARY,
@@ -313,7 +314,7 @@ namespace csb::utility
   }
 
   inline void generate_vcpkg_manifest(const std::filesystem::path &vcpkg_manifest_path,
-                                      const std::vector<std::pair<std::string, std::string>> &vcpkg_dependencies)
+                                      const std::unordered_map<std::string, std::string> &vcpkg_dependencies)
   {
     std::cout << "Generating vcpkg manifest... ";
     std::string commit_hash = {};
@@ -330,25 +331,14 @@ namespace csb::utility
         throw std::runtime_error("Failed to get vcpkg commit hash. Return code: " + std::to_string(return_code));
       });
     std::string content = "{\n  \"builtin-baseline\": \"" + commit_hash + "\",\n  \"dependencies\": [\n";
+    for (const auto &dependency : vcpkg_dependencies) content += std::format("    \"{}\",\n", dependency.first);
+    while (content.back() == '\n' || content.back() == ',') content.pop_back();
+    content += "\n  ],\n  \"overrides\": [\n";
     for (const auto &dependency : vcpkg_dependencies)
-    {
-      content += std::format("    \"{}\"", dependency.first);
-      if (&dependency != &vcpkg_dependencies.back())
-        content += ",\n";
-      else
-        content += "\n";
-    }
-    content += "  ],\n  \"overrides\": [\n";
-    for (const auto &dependency : vcpkg_dependencies)
-    {
-      content += std::format("    {{\n      \"name\": \"{}\",\n      \"version\": \"{}\"\n    }}", dependency.first,
+      content += std::format("    {{\n      \"name\": \"{}\",\n      \"version\": \"{}\"\n    }},\n", dependency.first,
                              dependency.second);
-      if (&dependency != &vcpkg_dependencies.back())
-        content += ",\n";
-      else
-        content += "\n";
-    }
-    content += "  ]\n}\n";
+    while (content.back() == '\n' || content.back() == ',') content.pop_back();
+    content += "\n  ]\n}\n";
     std::ofstream vcpkg_manifest_file(vcpkg_manifest_path);
     if (!vcpkg_manifest_file.is_open()) throw std::runtime_error("Failed to open vcpkg.json file for writing.");
     vcpkg_manifest_file << content;
@@ -390,13 +380,13 @@ namespace csb::utility
 
 namespace csb
 {
-  inline std::string name = "a";
-  inline output output_type = EXECUTABLE;
+  inline std::string target_name = "a";
+  inline artifact target_artifact = EXECUTABLE;
+  inline linkage target_linkage = STATIC;
+  inline subsystem target_subsystem = CONSOLE;
+  inline configuration target_configuration = RELEASE;
   inline standard cxx_standard = CXX20;
   inline warning warning_level = W4;
-  inline linkage linkage_type = STATIC;
-  inline configuration build_configuration = RELEASE;
-  inline subsystem subsystem_type = CONSOLE;
 
   inline std::set<std::filesystem::path> include_directories = {};
   inline std::set<std::filesystem::path> source_files = {};
@@ -407,14 +397,27 @@ namespace csb
 
   inline std::string clang_version = {};
 
-  struct vcpkg_output
+  inline std::set<std::filesystem::path> files_from(const std::filesystem::path &directory,
+                                                    const std::set<std::string> &extensions, bool recursive = true)
   {
-    std::filesystem::path include_directory = {};
-    std::filesystem::path library_directory = {};
-  };
+    std::set<std::filesystem::path> files = {};
+    if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+      throw std::runtime_error("Directory does not exist: " + directory.string());
+    if (recursive)
+    {
+      for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
+        if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
+          files.insert(entry.path().string());
+      return files;
+    }
+    for (const auto &entry : std::filesystem::directory_iterator(directory))
+      if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
+        files.insert(entry.path().string());
+    return files;
+  }
 
-  inline vcpkg_output vcpkg_install(const std::string &vcpkg_version,
-                                    const std::vector<std::pair<std::string, std::string>> &vcpkg_dependencies)
+  inline void vcpkg_install(const std::string &vcpkg_version,
+                            const std::unordered_map<std::string, std::string> &vcpkg_dependencies)
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (vcpkg_dependencies.empty()) throw std::runtime_error("No vcpkg dependencies provided.");
@@ -424,8 +427,8 @@ namespace csb
     utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
     utility::generate_vcpkg_manifest(vcpkg_path.parent_path() / "vcpkg.json", vcpkg_dependencies);
 
-    std::string vcpkg_triplet = utility::state.architecture + "-windows" + (linkage_type == STATIC ? "-static" : "") +
-                                (build_configuration == RELEASE ? "-release" : "");
+    std::string vcpkg_triplet = utility::state.architecture + "-windows" + (target_linkage == STATIC ? "-static" : "") +
+                                (target_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
     utility::live_execute(
@@ -433,12 +436,13 @@ namespace csb
                   vcpkg_path.parent_path().string(), vcpkg_triplet),
       "Failed to install vcpkg dependencies.", false);
 
-    vcpkg_output outputs = {vcpkg_installed_directory / vcpkg_triplet / "include",
-                            vcpkg_installed_directory / vcpkg_triplet /
-                              (build_configuration == RELEASE ? "lib" : "debug/lib")};
-    if (!std::filesystem::exists(outputs.include_directory) || !std::filesystem::exists(outputs.library_directory))
+    std::pair<std::filesystem::path, std::filesystem::path> outputs = {
+      vcpkg_installed_directory / vcpkg_triplet / "include",
+      vcpkg_installed_directory / vcpkg_triplet / (target_configuration == RELEASE ? "lib" : "debug/lib")};
+    if (!std::filesystem::exists(outputs.first) || !std::filesystem::exists(outputs.second))
       throw std::runtime_error("vcpkg outputs not found.");
-    return outputs;
+    external_include_directories.insert(outputs.first);
+    library_directories.insert(outputs.second);
   }
 
   inline void clang_compile_commands()
@@ -462,7 +466,7 @@ namespace csb
     };
 
     std::filesystem::path compile_commands_path = "compile_commands.json";
-    std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
+    std::string build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
     std::string content =
       std::format("[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
                   "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
@@ -544,15 +548,15 @@ namespace csb
 
   inline void build()
   {
-    if (name.empty()) throw std::runtime_error("Executable name not set.");
+    if (target_name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
 
-    std::string build_directory = build_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
+    std::string build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
     if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
 
-    std::string compile_debug_flags = build_configuration == RELEASE ? "/O2 " : "/O0 /Zi /RTC1 ";
-    std::string runtime_library = linkage_type == STATIC ? (build_configuration == RELEASE ? "MT" : "MTd")
-                                                         : (build_configuration == RELEASE ? "MD" : "MDd");
+    std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/O0 /Zi /RTC1 ";
+    std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
+                                                           : (target_configuration == RELEASE ? "MD" : "MDd");
     std::string compile_definitions = {};
     for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
     std::string compile_include_directories = {};
@@ -611,19 +615,22 @@ namespace csb
       [](const std::string &item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
 
-    std::string executable_option = output_type == STATIC_LIBRARY ? "lib" : "link";
-    std::string console_option = subsystem_type == CONSOLE ? "CONSOLE" : "WINDOWS";
-    std::string link_debug_flags = build_configuration == RELEASE  ? ""
-                                   : output_type == STATIC_LIBRARY ? ""
-                                                                   : "/DEBUG:FULL ";
-    std::string dynamic_flags = output_type == DYNAMIC_LIBRARY ? "/DLL /MANIFEST:EMBED /INCREMENTAL:NO "
-                                : output_type == EXECUTABLE    ? "/MANIFEST:EMBED /INCREMENTAL:NO "
-                                                               : "";
-    std::string extra_flags = output_type == DYNAMIC_LIBRARY ? std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ",
-                                                                           build_directory, name, build_directory, name)
-                              : output_type == EXECUTABLE    ? std::format("/PDB:{}{}.pdb ", build_directory, name)
-                                                             : "";
-    std::string extension = output_type == STATIC_LIBRARY ? "lib" : output_type == DYNAMIC_LIBRARY ? "dll" : "exe";
+    std::string executable_option = target_artifact == STATIC_LIBRARY ? "lib" : "link";
+    std::string console_option = target_subsystem == CONSOLE ? "CONSOLE" : "WINDOWS";
+    std::string link_debug_flags = target_configuration == RELEASE     ? ""
+                                   : target_artifact == STATIC_LIBRARY ? ""
+                                                                       : "/DEBUG:FULL ";
+    std::string dynamic_flags = target_artifact == DYNAMIC_LIBRARY ? "/DLL /MANIFEST:EMBED /INCREMENTAL:NO "
+                                : target_artifact == EXECUTABLE    ? "/MANIFEST:EMBED /INCREMENTAL:NO "
+                                                                   : "";
+    std::string extra_flags =
+      target_artifact == DYNAMIC_LIBRARY
+        ? std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", build_directory, target_name, build_directory, target_name)
+      : target_artifact == EXECUTABLE ? std::format("/PDB:{}{}.pdb ", build_directory, target_name)
+                                      : "";
+    std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
+                            : target_artifact == DYNAMIC_LIBRARY ? "dll"
+                                                                 : "exe";
     std::string link_library_directories = {};
     for (const auto &directory : library_directories)
       link_library_directories += std::format("/LIBPATH:\"{}\" ", directory.string());
@@ -632,11 +639,11 @@ namespace csb
     std::string link_objects = {};
     for (const auto &source_file : source_files)
       link_objects += std::format("{}{}.obj ", build_directory, source_file.stem().string());
-    if (!std::filesystem::exists(build_directory + name + "." + extension) || !modified_files.empty())
+    if (!std::filesystem::exists(build_directory + target_name + "." + extension) || !modified_files.empty())
       utility::execute(
         std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
                     utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                    link_library_directories, link_libraries, link_objects, extra_flags, build_directory, name,
+                    link_library_directories, link_libraries, link_objects, extra_flags, build_directory, target_name,
                     extension),
         [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
         [&](const std::string &command, const int return_code, const std::string &result)
