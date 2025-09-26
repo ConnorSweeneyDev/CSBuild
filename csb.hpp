@@ -278,21 +278,58 @@ namespace csb::utility
     return modified_files;
   }
 
-  inline void bootstrap_vcpkg(const std::filesystem::path &vcpkg_path, const std::string &vcpkg_version)
+  inline std::filesystem::path bootstrap_vcpkg(const std::string &vcpkg_version)
   {
-    if (std::filesystem::exists(vcpkg_path)) return;
+    bool needs_bootstrap = false;
 
+    std::filesystem::path vcpkg_path = std::format("build\\vcpkg-{}\\vcpkg.exe", vcpkg_version);
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
-      std::string command = "git clone https://github.com/microsoft/vcpkg.git " + vcpkg_path.parent_path().string();
-      if (std::system(command.c_str()) != 0) throw std::runtime_error("Failed to clone vcpkg.");
-      std::cout << "Checking out to vcpkg " + vcpkg_version + "..." << std::endl;
-      if (std::system(("cd " + vcpkg_path.parent_path().string() + " && git -c advice.detachedHead=false checkout " +
-                       vcpkg_version)
-                        .c_str()) != 0)
-        throw std::runtime_error("Failed to checkout vcpkg version.");
+      needs_bootstrap = true;
+      live_execute("git clone https://github.com/microsoft/vcpkg.git " + vcpkg_path.parent_path().string(),
+                   "Failed to clone vcpkg.", false);
     }
 
+    std::string current_hash = {};
+    execute(
+      std::format("cd {} && git rev-parse HEAD", vcpkg_path.parent_path().string()),
+      [&](const std::string &, const std::string &result)
+      {
+        current_hash = result;
+        current_hash.erase(std::remove(current_hash.begin(), current_hash.end(), '\n'), current_hash.end());
+      },
+      [](const std::string &, const int return_code, const std::string &result)
+      {
+        std::cerr << result << std::endl;
+        throw std::runtime_error("Failed to get vcpkg current version. Return code: " + std::to_string(return_code));
+      });
+    std::string target_hash = {};
+    execute(
+      std::format("cd {} && git rev-parse {}", vcpkg_path.parent_path().string(), vcpkg_version),
+      [&](const std::string &, const std::string &result)
+      {
+        target_hash = result;
+        target_hash.erase(std::remove(target_hash.begin(), target_hash.end(), '\n'), target_hash.end());
+      },
+      [](const std::string &, const int return_code, const std::string &result)
+      {
+        std::cerr << result << std::endl;
+        throw std::runtime_error("Failed to get vcpkg target version. Return code: " + std::to_string(return_code));
+      });
+    if (current_hash != target_hash)
+    {
+      needs_bootstrap = true;
+      std::cout << "Checking out to vcpkg " + vcpkg_version + "..." << std::endl;
+      live_execute("cd " + vcpkg_path.parent_path().string() + " && git -c advice.detachedHead=false checkout " +
+                     vcpkg_version,
+                   "Failed to checkout vcpkg version.", false);
+    }
+
+    if (!needs_bootstrap)
+    {
+      std::cout << "Using vcpkg version: " + vcpkg_version << std::endl;
+      return vcpkg_path;
+    }
     std::cout << "Bootstrapping vcpkg... ";
     utility::execute(
       "cd " + vcpkg_path.parent_path().string() + " && bootstrap-vcpkg.bat -disableMetrics",
@@ -311,6 +348,9 @@ namespace csb::utility
         std::cerr << result << std::endl;
         throw std::runtime_error("Failed to bootstrap vcpkg. Return code: " + std::to_string(return_code));
       });
+
+    if (!std::filesystem::exists(vcpkg_path)) throw std::runtime_error("Failed to find " + vcpkg_path.string() + ".");
+    return vcpkg_path;
   }
 
   inline void generate_vcpkg_manifest(const std::filesystem::path &vcpkg_manifest_path,
@@ -349,7 +389,8 @@ namespace csb::utility
   inline std::filesystem::path bootstrap_clang(const std::string &clang_version)
   {
     std::filesystem::path clang_path = std::format("build\\clang-{}", clang_version);
-    if (std::filesystem::exists(clang_path)) return clang_path.string();
+    if (std::filesystem::exists(clang_path)) return clang_path;
+    std::cout << std::endl;
 
     if (state.architecture != "x64" && state.architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
@@ -358,7 +399,7 @@ namespace csb::utility
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-{}-pc-windows-msvc.tar.xz",
       clang_version, clang_version, clang_architecture);
     std::cout << "Downloading archive at '" + url + "'..." << std::endl;
-    utility::live_execute(std::format("curl -f -L -o build\\temp.tar.xz {}", url), "Failed to download archive.",
+    utility::live_execute(std::format("curl -f -L -C - -o build\\temp.tar.xz {}", url), "Failed to download archive.",
                           false);
     std::cout << "Extracting archive... ";
     utility::live_execute("tar -xf build\\temp.tar.xz -C build", "Failed to extract archive.", false);
@@ -374,6 +415,7 @@ namespace csb::utility
     std::filesystem::remove_all(extracted_path);
     std::cout << "done." << std::endl;
 
+    if (!std::filesystem::exists(clang_path)) throw std::runtime_error("Failed to find " + clang_path.string() + ".");
     return clang_path;
   }
 }
@@ -423,8 +465,7 @@ namespace csb
     if (vcpkg_dependencies.empty()) throw std::runtime_error("No vcpkg dependencies provided.");
     std::cout << std::endl;
 
-    std::filesystem::path vcpkg_path = "build\\vcpkg\\vcpkg.exe";
-    utility::bootstrap_vcpkg(vcpkg_path, vcpkg_version);
+    std::filesystem::path vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
     utility::generate_vcpkg_manifest(vcpkg_path.parent_path() / "vcpkg.json", vcpkg_dependencies);
 
     std::string vcpkg_triplet = utility::state.architecture + "-windows" + (target_linkage == STATIC ? "-static" : "") +
@@ -438,7 +479,7 @@ namespace csb
 
     std::pair<std::filesystem::path, std::filesystem::path> outputs = {
       vcpkg_installed_directory / vcpkg_triplet / "include",
-      vcpkg_installed_directory / vcpkg_triplet / (target_configuration == RELEASE ? "lib" : "debug/lib")};
+      vcpkg_installed_directory / vcpkg_triplet / (target_configuration == RELEASE ? "lib" : "debug\\lib")};
     if (!std::filesystem::exists(outputs.first) || !std::filesystem::exists(outputs.second))
       throw std::runtime_error("vcpkg outputs not found.");
     external_include_directories.insert(outputs.first);
@@ -449,6 +490,9 @@ namespace csb
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
+
+    utility::bootstrap_clang(clang_version);
+
     std::cout << std::endl;
     std::cout << "Generating compile_commands.json... ";
 
@@ -554,7 +598,7 @@ namespace csb
     std::string build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
     if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
 
-    std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/O0 /Zi /RTC1 ";
+    std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
     std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
                                                            : (target_configuration == RELEASE ? "MD" : "MDd");
     std::string compile_definitions = {};
