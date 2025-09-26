@@ -610,8 +610,10 @@ namespace csb
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
 
+    std::vector<std::string> check_extensions = {"[.filename.stem].obj", "[.filename.stem].d"};
+    if (target_configuration == DEBUG) check_extensions.push_back("[.filename.stem].pdb");
     auto modified_files = utility::find_modified_files(
-      source_files, build_directory, {"[.filename.stem].obj", "[.filename.stem].d"},
+      source_files, build_directory, check_extensions,
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &check_files) -> bool
       {
         auto object_time = std::filesystem::last_write_time(check_files[0]);
@@ -623,11 +625,7 @@ namespace csb
         dependency_file.close();
 
         size_t includes_start = json_content.find("\"Includes\": [");
-        if (includes_start == std::string::npos)
-        {
-          std::cout << "3" << std::endl;
-          return true;
-        }
+        if (includes_start == std::string::npos) return true;
         size_t includes_end = json_content.find("]", includes_start);
         if (includes_end == std::string::npos) return true;
 
@@ -683,18 +681,25 @@ namespace csb
     std::string link_objects = {};
     for (const auto &source_file : source_files)
       link_objects += std::format("{}{}.obj ", build_directory, source_file.stem().string());
-    if (!std::filesystem::exists(build_directory + target_name + "." + extension) || !modified_files.empty())
-      utility::execute(
-        std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
-                    utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                    link_library_directories, link_libraries, link_objects, extra_flags, build_directory, target_name,
-                    extension),
-        [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
-        [&](const std::string &command, const int return_code, const std::string &result)
-        {
-          std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-          throw std::runtime_error("Linking errors occurred.");
-        });
+
+    if (target_artifact == STATIC_LIBRARY && std::filesystem::exists(build_directory + target_name + "." + extension) &&
+        modified_files.empty())
+      return;
+    if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) &&
+        std::filesystem::exists(build_directory + target_name + "." + extension) &&
+        std::filesystem::exists(build_directory + target_name + ".pdb") && modified_files.empty())
+      return;
+    utility::execute(
+      std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
+                  utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
+                  link_library_directories, link_libraries, link_objects, extra_flags, build_directory, target_name,
+                  extension),
+      [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
+      [&](const std::string &command, const int return_code, const std::string &result)
+      {
+        std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        throw std::runtime_error("Linking errors occurred.");
+      });
   }
 }
 
