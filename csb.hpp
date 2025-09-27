@@ -207,6 +207,7 @@ namespace csb::utility
         catch (const std::exception &e)
         {
           std::cerr << e.what() << std::endl;
+          should_stop = true;
         }
       return;
     }
@@ -219,41 +220,56 @@ namespace csb::utility
     if (std::system(command.c_str()) != 0) throw std::runtime_error(error_message);
   }
 
+  inline void touch(const std::filesystem::path &path)
+  {
+    std::ofstream file(path, std::ios::app);
+    if (!file.is_open()) throw std::runtime_error("Failed to open file: " + path.string());
+    file.close();
+  }
+
   inline std::vector<std::filesystem::path> find_modified_files(
-    const std::vector<std::filesystem::path> &target_files, const std::filesystem::path &check_directory,
-    const std::vector<std::string> &check_extensions,
+    const std::vector<std::filesystem::path> &target_files, const std::vector<std::string> &check_files,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
       &dependency_handler = nullptr)
   {
     std::vector<std::filesystem::path> modified_files = {};
-    for (const auto &file : target_files)
+    for (const auto &target_file : target_files)
     {
-      std::vector<std::filesystem::path> check_files;
+      std::vector<std::filesystem::path> valid_files;
       bool any_missing = false;
-      for (const auto &extension : check_extensions)
+      for (const auto &check_file : check_files)
       {
-        std::filesystem::path check_path = check_directory / path_placeholder_replace(file, extension);
+        std::filesystem::path check_path = path_placeholder_replace(target_file, check_file);
         if (!std::filesystem::exists(check_path))
         {
           any_missing = true;
           break;
         }
-        check_files.push_back(check_path);
+        valid_files.push_back(check_path);
       }
       if (any_missing)
       {
-        modified_files.push_back(file);
+        modified_files.push_back(target_file);
         continue;
       }
 
-      auto csb_header_time = std::filesystem::last_write_time("csb.hpp");
-      auto csb_source_time = std::filesystem::last_write_time("csb.cpp");
-      auto source_time = std::filesystem::last_write_time(file);
+      std::filesystem::file_time_type csb_header_time;
+      if (!std::filesystem::exists("csb.hpp"))
+        csb_header_time = std::filesystem::file_time_type::min();
+      else
+        csb_header_time = std::filesystem::last_write_time("csb.hpp");
+      std::filesystem::file_time_type csb_source_time;
+      if (!std::filesystem::exists("csb.cpp"))
+        csb_source_time = std::filesystem::file_time_type::min();
+      else
+        csb_source_time = std::filesystem::last_write_time("csb.cpp");
+      auto source_time = std::filesystem::last_write_time(target_file);
+
       bool needs_rebuild = false;
-      for (const auto &check_file : check_files)
+      for (const auto &file : valid_files)
       {
-        auto check_time = std::filesystem::last_write_time(check_file);
-        if (source_time > check_time || csb_header_time > check_time || csb_source_time > check_time)
+        auto time = std::filesystem::last_write_time(file);
+        if (source_time > time || csb_header_time > time || csb_source_time > time)
         {
           needs_rebuild = true;
           break;
@@ -261,7 +277,7 @@ namespace csb::utility
       }
       if (needs_rebuild)
       {
-        modified_files.push_back(file);
+        modified_files.push_back(target_file);
         continue;
       }
 
@@ -269,11 +285,11 @@ namespace csb::utility
       {
         try
         {
-          if (dependency_handler(file, check_files)) modified_files.push_back(file);
+          if (dependency_handler(target_file, valid_files)) modified_files.push_back(target_file);
         }
         catch (const std::exception &)
         {
-          modified_files.push_back(file);
+          modified_files.push_back(target_file);
         }
       }
     }
@@ -572,7 +588,8 @@ namespace csb
         if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
           format_files.push_back(entry.path());
 
-    auto modified_files = utility::find_modified_files(format_files, format_directory, {"[.filename].formatted"});
+    auto modified_files =
+      utility::find_modified_files(format_files, {format_directory.string() + "[.filename].formatted"});
     utility::multi_execute(
       std::format("{} -i \"[]\"", clang_format_path.string()), modified_files, "Formatting",
       [&](const std::string &item_command, const std::string &result)
@@ -580,13 +597,7 @@ namespace csb
         std::cout << "\n" + item_command + "\n" + result;
         std::filesystem::path item_path = item_command.substr(item_command.find("\"") + 1);
         item_path = item_path.string().substr(0, item_path.string().rfind("\""));
-        std::filesystem::path formatted_path = format_directory / item_path.filename().string().append(".formatted");
-        std::ofstream formatted_file(formatted_path);
-        if (formatted_file.is_open())
-        {
-          formatted_file << "Formatted by clang-format.\n";
-          formatted_file.close();
-        }
+        utility::touch(format_directory / item_path.filename().string().append(".formatted"));
       },
       [](const std::string &item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
@@ -597,7 +608,7 @@ namespace csb
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
 
-    std::string build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
+    std::filesystem::path build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
     if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
 
     std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
@@ -612,14 +623,15 @@ namespace csb
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
 
-    std::vector<std::string> check_extensions = {"[.filename.stem].obj", "[.filename.stem].d"};
-    if (target_configuration == DEBUG) check_extensions.push_back("[.filename.stem].pdb");
+    std::vector<std::string> check_files = {build_directory.string() + "[.filename.stem].obj",
+                                            build_directory.string() + "[.filename.stem].d"};
+    if (target_configuration == DEBUG) check_files.push_back(build_directory.string() + "[.filename.stem].pdb");
     auto modified_files = utility::find_modified_files(
-      source_files, build_directory, check_extensions,
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &check_files) -> bool
+      source_files, check_files,
+      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
       {
-        auto object_time = std::filesystem::last_write_time(check_files[0]);
-        std::filesystem::path dependency_path = check_files[1];
+        auto object_time = std::filesystem::last_write_time(checked_files[0]);
+        std::filesystem::path dependency_path = checked_files[1];
 
         std::ifstream dependency_file(dependency_path);
         if (!dependency_file.is_open()) return true;
@@ -652,8 +664,8 @@ namespace csb
       std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{} /Fo{} "
                   "/Fd{}[.stem].pdb /sourceDependencies{}[.stem].d {}{}/c \"[]\"",
                   std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
-                  compile_definitions, build_directory, build_directory, build_directory, build_directory,
-                  compile_include_directories, compile_external_include_directories),
+                  compile_definitions, build_directory.string(), build_directory.string(), build_directory.string(),
+                  build_directory.string(), compile_include_directories, compile_external_include_directories),
       modified_files, "Compilation", [](const std::string &item_command, const std::string &result)
       { std::cout << "\n" + item_command + "\n" + result; },
       [](const std::string &item_command, const int return_code, const std::string &result)
@@ -669,11 +681,11 @@ namespace csb
                                                                    : "";
     std::string output_flags =
       target_artifact == DYNAMIC_LIBRARY
-        ? (target_configuration == RELEASE ? std::format("/IMPLIB:{}{}.lib ", build_directory, target_name)
-                                           : std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", build_directory,
-                                                         target_name, build_directory, target_name))
+        ? (target_configuration == RELEASE ? std::format("/IMPLIB:{}{}.lib ", build_directory.string(), target_name)
+                                           : std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", build_directory.string(),
+                                                         target_name, build_directory.string(), target_name))
       : target_artifact == EXECUTABLE
-        ? (target_configuration == RELEASE ? "" : std::format("/PDB:{}{}.pdb ", build_directory, target_name))
+        ? (target_configuration == RELEASE ? "" : std::format("/PDB:{}{}.pdb ", build_directory.string(), target_name))
         : "";
     std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
                             : target_artifact == DYNAMIC_LIBRARY ? "dll"
@@ -685,24 +697,24 @@ namespace csb
     for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
     std::string link_objects = {};
     for (const auto &source_file : source_files)
-      link_objects += std::format("{}{}.obj ", build_directory, source_file.stem().string());
+      link_objects += std::format("{}{}.obj ", build_directory.string(), source_file.stem().string());
 
-    if (target_artifact == STATIC_LIBRARY && std::filesystem::exists(build_directory + target_name + "." + extension) &&
-        modified_files.empty())
+    if (target_artifact == STATIC_LIBRARY &&
+        std::filesystem::exists(build_directory.string() + target_name + "." + extension) && modified_files.empty())
       return;
     if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) && target_configuration == DEBUG &&
-        (std::filesystem::exists(build_directory + target_name + "." + extension) &&
-         std::filesystem::exists(build_directory + target_name + ".pdb")) &&
+        (std::filesystem::exists(build_directory.string() + target_name + "." + extension) &&
+         std::filesystem::exists(build_directory.string() + target_name + ".pdb")) &&
         modified_files.empty())
       return;
     if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) && target_configuration == RELEASE &&
-        (std::filesystem::exists(build_directory + target_name + "." + extension)) && modified_files.empty())
+        (std::filesystem::exists(build_directory.string() + target_name + "." + extension)) && modified_files.empty())
       return;
     utility::execute(
       std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
                   utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                  link_library_directories, link_libraries, link_objects, output_flags, build_directory, target_name,
-                  extension),
+                  link_library_directories, link_libraries, link_objects, output_flags, build_directory.string(),
+                  target_name, extension),
       [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
       [&](const std::string &command, const int return_code, const std::string &result)
       {
