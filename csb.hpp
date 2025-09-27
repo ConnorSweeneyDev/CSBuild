@@ -222,8 +222,10 @@ namespace csb::utility
 
   inline void touch(const std::filesystem::path &path)
   {
+    if (!std::filesystem::exists(path.parent_path())) std::filesystem::create_directories(path.parent_path());
+    if (std::filesystem::exists(path)) std::filesystem::remove(path);
     std::ofstream file(path, std::ios::app);
-    if (!file.is_open()) throw std::runtime_error("Failed to open file: " + path.string());
+    if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
     file.close();
   }
 
@@ -371,39 +373,6 @@ namespace csb::utility
     return vcpkg_path;
   }
 
-  inline void generate_vcpkg_manifest(const std::filesystem::path &vcpkg_manifest_path,
-                                      const std::unordered_map<std::string, std::string> &vcpkg_dependencies)
-  {
-    std::cout << "Generating vcpkg manifest... ";
-    std::string commit_hash = {};
-    utility::execute(
-      std::format("cd {} && git rev-parse HEAD", vcpkg_manifest_path.parent_path().string()),
-      [&](const std::string &, const std::string &result)
-      {
-        commit_hash = result;
-        commit_hash.erase(std::remove(commit_hash.begin(), commit_hash.end(), '\n'), commit_hash.end());
-      },
-      [](const std::string &, const int return_code, const std::string &result)
-      {
-        std::cerr << result << std::endl;
-        throw std::runtime_error("Failed to get vcpkg commit hash. Return code: " + std::to_string(return_code));
-      });
-    std::string content = "{\n  \"builtin-baseline\": \"" + commit_hash + "\",\n  \"dependencies\": [\n";
-    for (const auto &dependency : vcpkg_dependencies) content += std::format("    \"{}\",\n", dependency.first);
-    while (content.back() == '\n' || content.back() == ',') content.pop_back();
-    content += "\n  ],\n  \"overrides\": [\n";
-    for (const auto &dependency : vcpkg_dependencies)
-      content += std::format("    {{\n      \"name\": \"{}\",\n      \"version\": \"{}\"\n    }},\n", dependency.first,
-                             dependency.second);
-    while (content.back() == '\n' || content.back() == ',') content.pop_back();
-    content += "\n  ]\n}\n";
-    std::ofstream vcpkg_manifest_file(vcpkg_manifest_path);
-    if (!vcpkg_manifest_file.is_open()) throw std::runtime_error("Failed to open vcpkg.json file for writing.");
-    vcpkg_manifest_file << content;
-    vcpkg_manifest_file.close();
-    std::cout << "done." << std::endl;
-  }
-
   inline std::filesystem::path bootstrap_clang(const std::string &clang_version)
   {
     std::filesystem::path clang_path = std::format("build\\clang-{}", clang_version);
@@ -476,24 +445,21 @@ namespace csb
     return files;
   }
 
-  inline void vcpkg_install(const std::string &vcpkg_version,
-                            const std::unordered_map<std::string, std::string> &vcpkg_dependencies)
+  inline void vcpkg_install(const std::string &vcpkg_version)
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
-    if (vcpkg_dependencies.empty()) throw std::runtime_error("No vcpkg dependencies provided.");
     std::cout << std::endl;
 
     std::filesystem::path vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
-    utility::generate_vcpkg_manifest(vcpkg_path.parent_path() / "vcpkg.json", vcpkg_dependencies);
 
     std::string vcpkg_triplet = utility::state.architecture + "-windows" + (target_linkage == STATIC ? "-static" : "") +
                                 (target_configuration == RELEASE ? "-release" : "");
     std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
-    utility::live_execute(
-      std::format("cd {} && .\\vcpkg.exe install --vcpkg-root . --triplet {} --x-install-root ..\\vcpkg_installed",
-                  vcpkg_path.parent_path().string(), vcpkg_triplet),
-      "Failed to install vcpkg dependencies.", false);
+    utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
+                                      vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
+                                      vcpkg_installed_directory.string()),
+                          "Failed to install vcpkg dependencies.", false);
 
     std::pair<std::filesystem::path, std::filesystem::path> outputs = {
       vcpkg_installed_directory / vcpkg_triplet / "include",

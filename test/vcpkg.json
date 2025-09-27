@@ -1,0 +1,14 @@
+{
+  "builtin-baseline": "120deac3062162151622ca4860575a33844ba10b",
+  "dependencies": ["sdl3", "stb"],
+  "overrides": [
+    {
+      "name": "sdl3",
+      "version": "3.2.18"
+    },
+    {
+      "name": "stb",
+      "version": "2024-07-29#1"
+    }
+  ]
+}

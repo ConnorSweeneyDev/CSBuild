@@ -14,10 +14,10 @@ int csb_main()
   csb::warning_level = W4;
   csb::include_directories = {"program/include"};
   csb::source_files = csb::files_from("program/source", {".cpp"});
-
-  csb::vcpkg_install("2025.08.27", {{"sdl3", "3.2.20"}, {"stb", "2024-07-29#1"}});
   csb::libraries = {"kernel32", "user32",  "shell32", "gdi32",    "imm32",    "comdlg32", "ole32",   "oleaut32",
                     "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
+
+  csb::vcpkg_install("2025.08.27");
 
   csb::clang_version = "21.1.1";
   csb::clang_compile_commands();
