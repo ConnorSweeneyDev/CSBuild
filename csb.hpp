@@ -219,13 +219,13 @@ namespace csb::utility
     if (std::system(command.c_str()) != 0) throw std::runtime_error(error_message);
   }
 
-  inline std::set<std::filesystem::path> find_modified_files(
-    const std::set<std::filesystem::path> &target_files, const std::filesystem::path &check_directory,
+  inline std::vector<std::filesystem::path> find_modified_files(
+    const std::vector<std::filesystem::path> &target_files, const std::filesystem::path &check_directory,
     const std::vector<std::string> &check_extensions,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
       &dependency_handler = nullptr)
   {
-    std::set<std::filesystem::path> modified_files = {};
+    std::vector<std::filesystem::path> modified_files = {};
     for (const auto &file : target_files)
     {
       std::vector<std::filesystem::path> check_files;
@@ -242,16 +242,17 @@ namespace csb::utility
       }
       if (any_missing)
       {
-        modified_files.insert(file);
+        modified_files.push_back(file);
         continue;
       }
 
+      auto csb_time = std::filesystem::last_write_time("csb.cpp");
       auto source_time = std::filesystem::last_write_time(file);
       bool needs_rebuild = false;
       for (const auto &check_file : check_files)
       {
         auto check_time = std::filesystem::last_write_time(check_file);
-        if (source_time > check_time)
+        if (source_time > check_time || csb_time > check_time)
         {
           needs_rebuild = true;
           break;
@@ -259,7 +260,7 @@ namespace csb::utility
       }
       if (needs_rebuild)
       {
-        modified_files.insert(file);
+        modified_files.push_back(file);
         continue;
       }
 
@@ -267,11 +268,11 @@ namespace csb::utility
       {
         try
         {
-          if (dependency_handler(file, check_files)) modified_files.insert(file);
+          if (dependency_handler(file, check_files)) modified_files.push_back(file);
         }
         catch (const std::exception &)
         {
-          modified_files.insert(file);
+          modified_files.push_back(file);
         }
       }
     }
@@ -430,31 +431,31 @@ namespace csb
   inline standard cxx_standard = CXX20;
   inline warning warning_level = W4;
 
-  inline std::set<std::filesystem::path> include_directories = {};
-  inline std::set<std::filesystem::path> source_files = {};
-  inline std::set<std::filesystem::path> external_include_directories = {};
-  inline std::set<std::filesystem::path> library_directories = {};
-  inline std::set<std::string> libraries = {};
-  inline std::set<std::string> definitions = {};
+  inline std::vector<std::filesystem::path> include_directories = {};
+  inline std::vector<std::filesystem::path> source_files = {};
+  inline std::vector<std::filesystem::path> external_include_directories = {};
+  inline std::vector<std::filesystem::path> library_directories = {};
+  inline std::vector<std::string> libraries = {};
+  inline std::vector<std::string> definitions = {};
 
   inline std::string clang_version = {};
 
-  inline std::set<std::filesystem::path> files_from(const std::filesystem::path &directory,
-                                                    const std::set<std::string> &extensions, bool recursive = true)
+  inline std::vector<std::filesystem::path> files_from(const std::filesystem::path &directory,
+                                                       const std::set<std::string> &extensions, bool recursive = true)
   {
-    std::set<std::filesystem::path> files = {};
+    std::vector<std::filesystem::path> files = {};
     if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
       throw std::runtime_error("Directory does not exist: " + directory.string());
     if (recursive)
     {
       for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
         if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
-          files.insert(entry.path().string());
+          files.push_back(entry.path().string());
       return files;
     }
     for (const auto &entry : std::filesystem::directory_iterator(directory))
       if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
-        files.insert(entry.path().string());
+        files.push_back(entry.path().string());
     return files;
   }
 
@@ -482,8 +483,8 @@ namespace csb
       vcpkg_installed_directory / vcpkg_triplet / (target_configuration == RELEASE ? "lib" : "debug\\lib")};
     if (!std::filesystem::exists(outputs.first) || !std::filesystem::exists(outputs.second))
       throw std::runtime_error("vcpkg outputs not found.");
-    external_include_directories.insert(outputs.first);
-    library_directories.insert(outputs.second);
+    external_include_directories.push_back(outputs.first);
+    library_directories.push_back(outputs.second);
   }
 
   inline void clang_compile_commands()
@@ -564,11 +565,11 @@ namespace csb
     std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
     std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
 
-    std::set<std::filesystem::path> format_files = source_files;
+    std::vector<std::filesystem::path> format_files = source_files;
     for (auto iterator = include_directories.begin(); iterator != include_directories.end(); ++iterator)
       for (const auto &entry : std::filesystem::recursive_directory_iterator(*iterator))
         if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
-          format_files.insert(entry.path());
+          format_files.push_back(entry.path());
 
     auto modified_files = utility::find_modified_files(format_files, format_directory, {"[.filename].formatted"});
     utility::multi_execute(
@@ -665,11 +666,14 @@ namespace csb
     std::string dynamic_flags = target_artifact == DYNAMIC_LIBRARY ? "/DLL /MANIFEST:EMBED /INCREMENTAL:NO "
                                 : target_artifact == EXECUTABLE    ? "/MANIFEST:EMBED /INCREMENTAL:NO "
                                                                    : "";
-    std::string extra_flags =
+    std::string output_flags =
       target_artifact == DYNAMIC_LIBRARY
-        ? std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", build_directory, target_name, build_directory, target_name)
-      : target_artifact == EXECUTABLE ? std::format("/PDB:{}{}.pdb ", build_directory, target_name)
-                                      : "";
+        ? (target_configuration == RELEASE ? std::format("/IMPLIB:{}{}.lib ", build_directory, target_name)
+                                           : std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", build_directory,
+                                                         target_name, build_directory, target_name))
+      : target_artifact == EXECUTABLE
+        ? (target_configuration == RELEASE ? "" : std::format("/PDB:{}{}.pdb ", build_directory, target_name))
+        : "";
     std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
                             : target_artifact == DYNAMIC_LIBRARY ? "dll"
                                                                  : "exe";
@@ -685,14 +689,18 @@ namespace csb
     if (target_artifact == STATIC_LIBRARY && std::filesystem::exists(build_directory + target_name + "." + extension) &&
         modified_files.empty())
       return;
-    if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) &&
-        std::filesystem::exists(build_directory + target_name + "." + extension) &&
-        std::filesystem::exists(build_directory + target_name + ".pdb") && modified_files.empty())
+    if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) && target_configuration == DEBUG &&
+        (std::filesystem::exists(build_directory + target_name + "." + extension) &&
+         std::filesystem::exists(build_directory + target_name + ".pdb")) &&
+        modified_files.empty())
+      return;
+    if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) && target_configuration == RELEASE &&
+        (std::filesystem::exists(build_directory + target_name + "." + extension)) && modified_files.empty())
       return;
     utility::execute(
       std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
                   utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                  link_library_directories, link_libraries, link_objects, extra_flags, build_directory, target_name,
+                  link_library_directories, link_libraries, link_objects, output_flags, build_directory, target_name,
                   extension),
       [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
       [&](const std::string &command, const int return_code, const std::string &result)
