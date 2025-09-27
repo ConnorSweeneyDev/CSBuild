@@ -246,13 +246,14 @@ namespace csb::utility
         continue;
       }
 
-      auto csb_time = std::filesystem::last_write_time("csb.cpp");
+      auto csb_header_time = std::filesystem::last_write_time("csb.hpp");
+      auto csb_source_time = std::filesystem::last_write_time("csb.cpp");
       auto source_time = std::filesystem::last_write_time(file);
       bool needs_rebuild = false;
       for (const auto &check_file : check_files)
       {
         auto check_time = std::filesystem::last_write_time(check_file);
-        if (source_time > check_time || csb_time > check_time)
+        if (source_time > check_time || csb_header_time > check_time || csb_source_time > check_time)
         {
           needs_rebuild = true;
           break;
