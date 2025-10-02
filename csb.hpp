@@ -417,7 +417,7 @@ namespace csb
   inline standard cxx_standard = CXX20;
   inline warning warning_level = W4;
 
-  inline std::vector<std::filesystem::path> include_directories = {};
+  inline std::vector<std::filesystem::path> include_files = {};
   inline std::vector<std::filesystem::path> source_files = {};
   inline std::vector<std::filesystem::path> external_include_directories = {};
   inline std::vector<std::filesystem::path> library_directories = {};
@@ -514,6 +514,13 @@ namespace csb
                              "-Wunreachable-code-aggressive -Wformat=2 -DWIN32 -D_WINDOWS ",
                              std::to_string(cxx_standard));
       for (const auto &definition : definitions) content += std::format("-D{} ", definition);
+      std::vector<std::filesystem::path> include_directories = {};
+      for (const auto &include_file : include_files)
+      {
+        if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
+                                                        include_file.parent_path()) == include_directories.end())
+          include_directories.push_back(include_file.parent_path());
+      }
       for (const auto &directory : include_directories)
         content += std::format("-I\\\"{}\\\" ", escape_backslashes(directory.string()));
       for (const auto &directory : external_include_directories)
@@ -540,7 +547,7 @@ namespace csb
   inline void clang_format()
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
-    if (source_files.empty() && include_directories.empty()) throw std::runtime_error("No files to format.");
+    if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
 
     std::filesystem::path format_directory = "build\\format\\";
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
@@ -548,11 +555,10 @@ namespace csb
     std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
     std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
 
-    std::vector<std::filesystem::path> format_files = source_files;
-    for (auto iterator = include_directories.begin(); iterator != include_directories.end(); ++iterator)
-      for (const auto &entry : std::filesystem::recursive_directory_iterator(*iterator))
-        if (entry.is_regular_file() && (entry.path().extension() == ".hpp" || entry.path().extension() == ".inl"))
-          format_files.push_back(entry.path());
+    std::vector<std::filesystem::path> format_files = {};
+    format_files.reserve(source_files.size() + include_files.size());
+    format_files.insert(format_files.end(), source_files.begin(), source_files.end());
+    format_files.insert(format_files.end(), include_files.begin(), include_files.end());
 
     auto modified_files =
       utility::find_modified_files(format_files, {format_directory.string() + "[.filename].formatted"});
@@ -582,6 +588,13 @@ namespace csb
                                                            : (target_configuration == RELEASE ? "MD" : "MDd");
     std::string compile_definitions = {};
     for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
+    std::vector<std::filesystem::path> include_directories = {};
+    for (const auto &include_file : include_files)
+    {
+      if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
+                                                      include_file.parent_path()) == include_directories.end())
+        include_directories.push_back(include_file.parent_path());
+    }
     std::string compile_include_directories = {};
     for (const auto &directory : include_directories)
       compile_include_directories += std::format("/I\"{}\" ", directory.string());
