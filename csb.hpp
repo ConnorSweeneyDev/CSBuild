@@ -20,7 +20,6 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -75,8 +74,8 @@ namespace csb::utility
     std::optional<configuration> forced_configuration = std::nullopt;
   } inline state = {};
 
-  inline const std::string section_divider = "========================================================================="
-                                             "===============================================";
+  inline const std::string section_divider = "-------------------------------------------------------------------------"
+                                             "-----------------------------------------------";
 
   inline void handle_arguments(int argc, char *argv[])
   {
@@ -238,7 +237,19 @@ namespace csb::utility
   inline void live_execute(const std::string &command, const std::string &error_message, bool print_command)
   {
     if (print_command) std::cout << command << std::endl;
-    if (std::system(command.c_str()) != 0) throw std::runtime_error(error_message);
+
+    FILE *pipe = _popen((command + " 2>&1").c_str(), "r");
+    if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
+
+    int c;
+    while ((c = fgetc(pipe)) != EOF)
+    {
+      std::cout << static_cast<char>(c);
+      std::cout.flush();
+    }
+
+    int return_code = _pclose(pipe);
+    if (return_code != 0) throw std::runtime_error(error_message);
   }
 
   inline void touch(const std::filesystem::path &path)
@@ -327,7 +338,7 @@ namespace csb::utility
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
       needs_bootstrap = true;
-      live_execute("git clone https://github.com/microsoft/vcpkg.git " + vcpkg_path.parent_path().string(),
+      live_execute("git clone --progress https://github.com/microsoft/vcpkg.git " + vcpkg_path.parent_path().string(),
                    "Failed to clone vcpkg.", false);
     }
 
@@ -372,6 +383,7 @@ namespace csb::utility
       return vcpkg_path;
     }
     std::cout << "Bootstrapping vcpkg... ";
+    std::cout.flush();
     utility::execute(
       "cd " + vcpkg_path.parent_path().string() + " && bootstrap-vcpkg.bat -disableMetrics",
       [](const std::string &, const std::string &result)
@@ -410,6 +422,7 @@ namespace csb::utility
     utility::live_execute(std::format("curl -f -L -C - -o build\\temp.tar.xz {}", url), "Failed to download archive.",
                           false);
     std::cout << "Extracting archive... ";
+    std::cout.flush();
     utility::live_execute("tar -xf build\\temp.tar.xz -C build", "Failed to extract archive.", false);
     std::filesystem::remove("build\\temp.tar.xz");
     std::filesystem::path extracted_path =
@@ -527,7 +540,7 @@ namespace csb
       std::cout << "Building subproject " + repo_name + " (" + version + ")..." << std::endl;
       std::filesystem::path subproject_path = subproject_directory / repo_name;
       if (!std::filesystem::exists(subproject_path))
-        utility::live_execute("git clone https://github.com/" + name + ".git " + subproject_path.string(),
+        utility::live_execute("git clone --progress https://github.com/" + name + ".git " + subproject_path.string(),
                               "Failed to clone subproject: " + name, false);
       std::string current_hash = {};
       utility::execute(
@@ -638,6 +651,7 @@ namespace csb
     utility::bootstrap_clang(clang_version);
 
     std::cout << std::endl << "Generating compile_commands.json... ";
+    std::cout.flush();
 
     auto escape_backslashes = [](const std::string &string) -> std::string
     {
@@ -731,6 +745,7 @@ namespace csb
       [&](const std::string &item_command, const std::string &result)
       {
         std::cout << "\n" + item_command + "\n" + result;
+        std::cout.flush();
         std::filesystem::path item_path = item_command.substr(item_command.find("\"") + 1);
         item_path = item_path.string().substr(0, item_path.string().rfind("\""));
         utility::touch(format_directory / item_path.filename().string().append(".formatted"));
@@ -811,8 +826,12 @@ namespace csb
                   std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
                   compile_definitions, build_directory.string(), build_directory.string(), build_directory.string(),
                   build_directory.string(), compile_include_directories, compile_external_include_directories),
-      modified_files, "Compilation", [](const std::string &item_command, const std::string &result)
-      { std::cout << "\n" + item_command + "\n" + result; },
+      modified_files, "Compilation",
+      [](const std::string &item_command, const std::string &result)
+      {
+        std::cout << "\n" + item_command + "\n" + result;
+        std::cout.flush();
+      },
       [](const std::string &item_command, const int return_code, const std::string &result)
       { std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n"; });
 
@@ -860,7 +879,11 @@ namespace csb
                   utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
                   link_library_directories, link_libraries, link_objects, output_flags, build_directory.string(),
                   target_name, extension),
-      [&](const std::string &command, const std::string &result) { std::cout << "\n" + command + "\n" + result; },
+      [&](const std::string &command, const std::string &result)
+      {
+        std::cout << "\n" + command + "\n" + result;
+        std::cout.flush();
+      },
       [&](const std::string &command, const int return_code, const std::string &result)
       {
         std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
