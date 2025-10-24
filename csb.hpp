@@ -890,6 +890,6 @@ namespace csb
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
       std::cerr << "Error: " << exception.what() << std::endl;                                                         \
-      return CSB_FAILURE;                                                                                             \
+      return CSB_FAILURE;                                                                                              \
     }                                                                                                                  \
   }
