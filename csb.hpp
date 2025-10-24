@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <concepts>
 #include <cstdlib>
 #include <exception>
@@ -13,9 +14,11 @@
 #include <iostream>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -69,7 +72,25 @@ namespace csb::utility
   struct internal_state
   {
     std::string architecture = {};
+    std::optional<configuration> forced_configuration = std::nullopt;
   } inline state = {};
+
+  inline const std::string section_divider = "========================================================================="
+                                             "===============================================";
+
+  inline void handle_arguments(int argc, char *argv[])
+  {
+    for (int i = 1; i < argc; ++i)
+    {
+      std::string argument = argv[i];
+      if (argument == "--release")
+        state.forced_configuration = RELEASE;
+      else if (argument == "--debug")
+        state.forced_configuration = DEBUG;
+      else
+        throw std::runtime_error("Unknown argument: " + argument);
+    }
+  }
 
   inline std::string get_environment_variable(const std::string &name, const std::string &error_message)
   {
@@ -230,7 +251,7 @@ namespace csb::utility
   }
 
   inline std::vector<std::filesystem::path> find_modified_files(
-    const std::vector<std::filesystem::path> &target_files, const std::vector<std::string> &check_files,
+    const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
       &dependency_handler = nullptr)
   {
@@ -241,7 +262,7 @@ namespace csb::utility
       bool any_missing = false;
       for (const auto &check_file : check_files)
       {
-        std::filesystem::path check_path = path_placeholder_replace(target_file, check_file);
+        std::filesystem::path check_path = path_placeholder_replace(target_file, check_file.string());
         if (!std::filesystem::exists(check_path))
         {
           any_missing = true;
@@ -445,10 +466,145 @@ namespace csb
     return files;
   }
 
+  inline void task_run(const std::string &command)
+  {
+    std::cout << std::endl << utility::section_divider << std::endl;
+    utility::live_execute(command, "Failed to run task: " + command, true);
+    std::cout << utility::section_divider << std::endl;
+  }
+
+  inline void task_run(const std::string &command, const std::vector<std::filesystem::path> &check_files)
+  {
+    bool needs_run = false;
+    for (const auto &file : check_files)
+      if (!std::filesystem::exists(file))
+      {
+        needs_run = true;
+        break;
+      }
+    if (!needs_run) return;
+    std::cout << std::endl << utility::section_divider << std::endl;
+
+    utility::live_execute(command, "Failed to run task: " + command, true);
+    for (const auto &file : check_files) utility::touch(file);
+
+    std::cout << utility::section_divider << std::endl;
+  }
+
+  inline void task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
+                       const std::vector<std::filesystem::path> &check_files)
+  {
+    if (utility::find_modified_files(target_files, check_files).empty()) return;
+    std::cout << std::endl << utility::section_divider << std::endl;
+
+    utility::live_execute(command, "Failed to run task: " + command, true);
+
+    std::cout << utility::section_divider << std::endl;
+  }
+
+  // inline void multi_task_run()
+  // {
+  // }
+
+  inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
+  {
+    if (subprojects.empty()) throw std::runtime_error("No subprojects to install.");
+    if (utility::state.forced_configuration.has_value())
+      target_configuration = utility::state.forced_configuration.value();
+
+    std::filesystem::path subproject_directory = "build\\subproject\\";
+    if (!std::filesystem::exists(subproject_directory)) std::filesystem::create_directories(subproject_directory);
+
+    for (const auto &subproject : subprojects)
+    {
+      std::cout << std::endl << utility::section_divider << std::endl;
+
+      auto [name, version, artifact_type] = subproject;
+      if (name.empty()) throw std::runtime_error("Subproject name not set.");
+      if (version.empty()) throw std::runtime_error("Subproject version not set.");
+
+      std::string repo_name = name.substr(name.find('/') + 1);
+      std::cout << "Building subproject " + repo_name + " (" + version + ")..." << std::endl;
+      std::filesystem::path subproject_path = subproject_directory / repo_name;
+      if (!std::filesystem::exists(subproject_path))
+        utility::live_execute("git clone https://github.com/" + name + ".git " + subproject_path.string(),
+                              "Failed to clone subproject: " + name, false);
+      std::string current_hash = {};
+      utility::execute(
+        std::format("cd {} && git rev-parse HEAD", subproject_path.string()),
+        [&](const std::string &, const std::string &result)
+        {
+          current_hash = result;
+          current_hash.erase(std::remove(current_hash.begin(), current_hash.end(), '\n'), current_hash.end());
+        },
+        [](const std::string &, const int return_code, const std::string &result)
+        {
+          std::cerr << result << std::endl;
+          throw std::runtime_error("Failed to get subproject current version. Return code: " +
+                                   std::to_string(return_code));
+        });
+      std::string target_hash = {};
+      utility::execute(
+        std::format("cd {} && git rev-parse {}", subproject_path.string(), version),
+        [&](const std::string &, const std::string &result)
+        {
+          target_hash = result;
+          target_hash.erase(std::remove(target_hash.begin(), target_hash.end(), '\n'), target_hash.end());
+        },
+        [](const std::string &, const int return_code, const std::string &result)
+        {
+          std::cerr << result << std::endl;
+          throw std::runtime_error("Failed to get subproject target version. Return code: " +
+                                   std::to_string(return_code));
+        });
+      if (current_hash != target_hash)
+      {
+        std::cout << "Checking out to subproject " + name + " " + version + "..." << std::endl;
+        utility::live_execute("cd " + subproject_path.string() + " && git -c advice.detachedHead=false checkout " +
+                                version,
+                              "Failed to checkout subproject version: " + version, false);
+      }
+
+      std::filesystem::path build_path =
+        subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug");
+      if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
+
+      std::string upper_architecture = utility::state.architecture;
+      std::transform(upper_architecture.begin(), upper_architecture.end(), upper_architecture.begin(),
+                     [](unsigned char c) { return std::toupper(c); });
+      utility::live_execute("cd " + subproject_path.string() +
+                              " && cl /nologo /EHsc /std:c++20 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:" +
+                              upper_architecture + " /OUT:build\\csb.exe build\\csb.obj && build\\csb.exe --" +
+                              (target_configuration == RELEASE ? "release" : "debug"),
+                            "Failed to install subproject: " + name, false);
+
+      if (artifact_type == EXECUTABLE)
+      {
+        char *current_path = {};
+        size_t length = {};
+        _dupenv_s(&current_path, &length, "PATH");
+        std::string new_path = std::string(current_path) + ";" + std::filesystem::absolute(build_path).string();
+        _putenv_s("PATH", new_path.c_str());
+        free(current_path);
+      }
+      else if (artifact_type == STATIC_LIBRARY || artifact_type == DYNAMIC_LIBRARY)
+      {
+        std::filesystem::path include_path = subproject_path / "include";
+        if (std::filesystem::exists(include_path) && std::filesystem::is_directory(include_path))
+          external_include_directories.push_back(include_path);
+        library_directories.push_back(build_path);
+      }
+
+      std::cout << utility::section_divider << std::endl;
+    }
+  }
+
   inline void vcpkg_install(const std::string &vcpkg_version)
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
-    std::cout << std::endl;
+    if (utility::state.forced_configuration.has_value())
+      target_configuration = utility::state.forced_configuration.value();
+    std::cout << std::endl << utility::section_divider << std::endl;
 
     std::filesystem::path vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
@@ -468,17 +624,20 @@ namespace csb
       throw std::runtime_error("vcpkg outputs not found.");
     external_include_directories.push_back(outputs.first);
     library_directories.push_back(outputs.second);
+
+    std::cout << utility::section_divider << std::endl;
   }
 
   inline void clang_compile_commands()
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
+    if (utility::state.forced_configuration.has_value())
+      target_configuration = utility::state.forced_configuration.value();
 
     utility::bootstrap_clang(clang_version);
 
-    std::cout << std::endl;
-    std::cout << "Generating compile_commands.json... ";
+    std::cout << std::endl << "Generating compile_commands.json... ";
 
     auto escape_backslashes = [](const std::string &string) -> std::string
     {
@@ -544,7 +703,7 @@ namespace csb
     std::cout << "done." << std::endl;
   }
 
-  inline void clang_format()
+  inline void clang_format(std::vector<std::filesystem::path> exclude_files = {})
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
@@ -559,6 +718,11 @@ namespace csb
     format_files.reserve(source_files.size() + include_files.size());
     format_files.insert(format_files.end(), source_files.begin(), source_files.end());
     format_files.insert(format_files.end(), include_files.begin(), include_files.end());
+    if (!exclude_files.empty())
+      format_files.erase(
+        std::remove_if(format_files.begin(), format_files.end(), [&](const std::filesystem::path &path)
+                       { return std::find(exclude_files.begin(), exclude_files.end(), path) != exclude_files.end(); }),
+        format_files.end());
 
     auto modified_files =
       utility::find_modified_files(format_files, {format_directory.string() + "[.filename].formatted"});
@@ -579,6 +743,8 @@ namespace csb
   {
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
+    if (utility::state.forced_configuration.has_value())
+      target_configuration = utility::state.forced_configuration.value();
 
     std::filesystem::path build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
     if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
@@ -602,8 +768,8 @@ namespace csb
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
 
-    std::vector<std::string> check_files = {build_directory.string() + "[.filename.stem].obj",
-                                            build_directory.string() + "[.filename.stem].d"};
+    std::vector<std::filesystem::path> check_files = {build_directory.string() + "[.filename.stem].obj",
+                                                      build_directory.string() + "[.filename.stem].d"};
     if (target_configuration == DEBUG) check_files.push_back(build_directory.string() + "[.filename.stem].pdb");
     auto modified_files = utility::find_modified_files(
       source_files, check_files,
@@ -704,7 +870,7 @@ namespace csb
 }
 
 #define CSB_MAIN()                                                                                                     \
-  int main()                                                                                                           \
+  int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
     const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";         \
     const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);                 \
@@ -716,6 +882,7 @@ namespace csb
               << std::endl;                                                                                            \
     try                                                                                                                \
     {                                                                                                                  \
+      csb::utility::handle_arguments(argc, argv);                                                                      \
       return csb_main();                                                                                               \
     }                                                                                                                  \
     catch (const std::exception &exception)                                                                            \
