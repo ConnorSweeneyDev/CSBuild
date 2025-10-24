@@ -1,7 +1,5 @@
 #include "../csb.hpp" // Would just be "csb.hpp" in a real project
 
-#include <cstdlib>
-
 int csb_main()
 {
   csb::target_name = "test";
@@ -28,7 +26,7 @@ int csb_main()
   csb::clang_format();
 
   csb::build();
-  return EXIT_SUCCESS;
+  return CSB_SUCCESS;
 }
 
 CSB_MAIN()

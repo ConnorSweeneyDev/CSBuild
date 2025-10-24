@@ -17,4 +17,4 @@ A zero dependency, cross-platform build system for C++ projects.
 - An environment with access to `cl` and `link` on Windows or `g++` on Linux.
 - Git installed and available.
 
-See the [test](test) directory for an example project linking to SDL3.
+See the [test](test) directory for an example project that uses all of the most important features.

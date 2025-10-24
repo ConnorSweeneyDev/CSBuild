@@ -869,6 +869,8 @@ namespace csb
   }
 }
 
+#define CSB_SUCCESS EXIT_SUCCESS
+#define CSB_FAILURE EXIT_FAILURE
 #define CSB_MAIN()                                                                                                     \
   int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
@@ -888,6 +890,6 @@ namespace csb
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
       std::cerr << "Error: " << exception.what() << std::endl;                                                         \
-      return EXIT_FAILURE;                                                                                             \
+      return CSB_FAILURE;                                                                                             \
     }                                                                                                                  \
   }
