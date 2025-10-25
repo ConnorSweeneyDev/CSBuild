@@ -75,8 +75,11 @@ namespace csb::utility
     std::optional<configuration> forced_configuration = std::nullopt;
   } inline state = {};
 
-  inline const std::string section_divider = "-------------------------------------------------------------------------"
-                                             "-----------------------------------------------";
+  inline const std::string big_section_divider = "====================================================================="
+                                                 "===================================================";
+  inline const std::string small_section_divider =
+    "-------------------------------------------------------------------------"
+    "-----------------------------------------------";
 
   inline void handle_arguments(int argc, char *argv[])
   {
@@ -506,33 +509,33 @@ namespace csb
 
   inline void task_run(const std::string &command)
   {
-    std::cout << std::endl << utility::section_divider << std::endl;
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
     utility::live_execute(command, "Failed to run task: " + command, true);
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void task_run(const std::string &command, const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
-    std::cout << std::endl << utility::section_divider << std::endl;
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
     utility::live_execute(command, "Failed to run task: " + command, true);
     utility::touch(check_file);
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
                        const std::vector<std::filesystem::path> &check_files)
   {
     if (utility::find_modified_files(target_files, check_files).empty()) return;
-    std::cout << std::endl << utility::section_divider << std::endl;
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
     utility::live_execute(command, "Failed to run task: " + command, true);
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &check_files,
@@ -542,7 +545,7 @@ namespace csb
     for (const auto &file : check_files)
       if (!std::filesystem::exists(file)) target_files.push_back(file);
     if (target_files.empty()) return;
-    std::cout << std::endl << utility::section_divider;
+    std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
 
     utility::multi_execute(
@@ -563,7 +566,7 @@ namespace csb
         std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
       });
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
@@ -572,7 +575,7 @@ namespace csb
   {
     auto modified_files = utility::find_modified_files(target_files, check_files);
     if (modified_files.empty()) return;
-    std::cout << std::endl << utility::section_divider;
+    std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
 
     utility::multi_execute(
@@ -593,7 +596,7 @@ namespace csb
         std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
       });
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
@@ -607,7 +610,7 @@ namespace csb
 
     for (const auto &subproject : subprojects)
     {
-      std::cout << std::endl << utility::section_divider << std::endl;
+      std::cout << std::endl << utility::big_section_divider << std::endl;
 
       auto [name, version, artifact_type] = subproject;
       if (name.empty()) throw std::runtime_error("Subproject name not set.");
@@ -690,7 +693,7 @@ namespace csb
         library_directories.push_back(build_path);
       }
 
-      std::cout << utility::section_divider << std::endl;
+      std::cout << utility::big_section_divider << std::endl;
     }
   }
 
@@ -699,7 +702,7 @@ namespace csb
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
-    std::cout << std::endl << utility::section_divider << std::endl;
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
     std::filesystem::path vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
@@ -720,7 +723,7 @@ namespace csb
     external_include_directories.push_back(outputs.first);
     library_directories.push_back(outputs.second);
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void clang_compile_commands()
@@ -729,7 +732,7 @@ namespace csb
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
-    std::cout << std::endl << utility::section_divider;
+    std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
 
     utility::bootstrap_clang(clang_version);
@@ -800,7 +803,7 @@ namespace csb
     compile_commands_file.close();
     std::cout << "done." << std::endl;
 
-    std::cout << utility::section_divider << std::endl;
+    std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void clang_format(std::vector<std::filesystem::path> exclude_files = {})
@@ -825,7 +828,7 @@ namespace csb
       utility::find_modified_files(format_files, {format_directory.string() + "[.filename].formatted"});
     if (!modified_files.empty())
     {
-      std::cout << std::endl << utility::section_divider;
+      std::cout << std::endl << utility::small_section_divider;
       std::cout.flush();
     }
     std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
@@ -849,7 +852,7 @@ namespace csb
         std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
       });
 
-    if (!modified_files.empty()) std::cout << utility::section_divider << std::endl;
+    if (!modified_files.empty()) std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void build()
@@ -920,7 +923,7 @@ namespace csb
       });
     if (!modified_files.empty())
     {
-      std::cout << std::endl << utility::section_divider;
+      std::cout << std::endl << utility::small_section_divider;
       std::cout.flush();
     }
     utility::multi_execute(
@@ -1000,7 +1003,7 @@ namespace csb
         throw std::runtime_error("Linking errors occurred.");
       });
 
-    if (!modified_files.empty()) std::cout << utility::section_divider << std::endl;
+    if (!modified_files.empty()) std::cout << utility::small_section_divider << std::endl;
   }
 }
 
