@@ -72,15 +72,14 @@ namespace csb::utility
   struct internal_state
   {
     std::string architecture = {};
-    std::optional<configuration> forced_configuration = std::nullopt;
+    std::optional<configuration> forced_configuration = {};
     std::filesystem::path build_directory = {};
   } inline state = {};
 
   inline const std::string big_section_divider = "====================================================================="
                                                  "===================================================";
-  inline const std::string small_section_divider =
-    "-------------------------------------------------------------------------"
-    "-----------------------------------------------";
+  inline const std::string small_section_divider = "-------------------------------------------------------------------"
+                                                   "-----------------------------------------------------";
 
   inline void handle_arguments(int argc, char *argv[])
   {
