@@ -25,7 +25,8 @@ int csb_main()
   csb::clang_compile_commands();
   csb::clang_format();
 
-  csb::build();
+  csb::compile();
+  csb::link();
   return CSB_SUCCESS;
 }
 

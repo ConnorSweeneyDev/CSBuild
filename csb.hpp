@@ -73,6 +73,7 @@ namespace csb::utility
   {
     std::string architecture = {};
     std::optional<configuration> forced_configuration = std::nullopt;
+    std::filesystem::path build_directory = {};
   } inline state = {};
 
   inline const std::string big_section_divider = "====================================================================="
@@ -105,6 +106,16 @@ namespace csb::utility
     free(value);
     if (result.empty()) throw std::runtime_error(name + " environment variable is empty.");
     return result;
+  }
+
+  inline std::string remove_trailing_and_leading_newlines(const std::string &input)
+  {
+    size_t start = input.find_first_not_of('\n');
+    size_t end = input.find_last_not_of('\n');
+    if (start == std::string::npos)
+      return "";
+    else
+      return input.substr(start, end - start + 1);
   }
 
   inline std::string path_placeholder_replace(const std::filesystem::path &path, const std::string &placeholder)
@@ -509,6 +520,78 @@ namespace csb
 
   inline void task_run(const std::string &command)
   {
+    std::cout << std::endl << utility::small_section_divider;
+    std::cout.flush();
+
+    utility::execute(
+      command,
+      [&](const std::string &real_command, std::string result)
+      {
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cout << "\n" + real_command + "\n" + (result.empty() ? "" : result + "\n");
+      },
+      [&](const std::string &real_command, const int return_code, std::string result)
+      {
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cerr << "\n" + real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+      });
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void task_run(const std::string &command, const std::filesystem::path &check_file)
+  {
+    if (std::filesystem::exists(check_file)) return;
+    std::cout << std::endl << utility::small_section_divider;
+    std::cout.flush();
+
+    utility::execute(
+      command,
+      [&](const std::string &, std::string result)
+      {
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cout << "\n" + command + "\n" + (result.empty() ? "" : result + "\n");
+        utility::touch(check_file);
+      },
+      [&](const std::string &, const int return_code, std::string result)
+      {
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cerr << "\n" + command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+      });
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
+                       const std::vector<std::filesystem::path> &check_files,
+                       std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+                         dependency_handler = nullptr)
+  {
+    auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
+    if (modified_files.empty()) return;
+    std::cout << std::endl << utility::small_section_divider;
+    std::cout.flush();
+
+    utility::execute(
+      command,
+      [&](const std::string &real_command, std::string result)
+      {
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cout << "\n" + real_command + "\n" + (result.empty() ? "" : result + "\n");
+        for (const auto &file : modified_files)
+          for (const auto &dependency : file.second) utility::touch(dependency);
+      },
+      [&](const std::string &real_command, const int return_code, std::string result)
+      {
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cerr << "\n" + real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+      });
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void live_task_run(const std::string &command)
+  {
     std::cout << std::endl << utility::small_section_divider << std::endl;
 
     utility::live_execute(command, "Failed to run task: " + command, true);
@@ -516,7 +599,7 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void task_run(const std::string &command, const std::filesystem::path &check_file)
+  inline void live_task_run(const std::string &command, const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
     std::cout << std::endl << utility::small_section_divider << std::endl;
@@ -527,13 +610,19 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
-                       const std::vector<std::filesystem::path> &check_files)
+  inline void live_task_run(
+    const std::string &command, const std::vector<std::filesystem::path> &target_files,
+    const std::vector<std::filesystem::path> &check_files,
+    std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
+      nullptr)
   {
-    if (utility::find_modified_files(target_files, check_files).empty()) return;
+    auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
+    if (modified_files.empty()) return;
     std::cout << std::endl << utility::small_section_divider << std::endl;
 
     utility::live_execute(command, "Failed to run task: " + command, true);
+    for (const auto &file : modified_files)
+      for (const auto &dependency : file.second) utility::touch(dependency);
 
     std::cout << utility::small_section_divider << std::endl;
   }
@@ -551,29 +640,30 @@ namespace csb
     utility::multi_execute(
       command, target_files, task_name,
       [](const std::filesystem::path item, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const std::string &result)
+         std::string result)
       {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cout << "\n" + item_command + "\n" + (result_copy.empty() ? "" : result_copy + "\n");
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
         utility::touch(item);
       },
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const int return_code, const std::string &result)
+         const int return_code, std::string result)
       {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
       });
 
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
-                             const std::vector<std::filesystem::path> &check_files,
-                             const std::string &task_name = "Multitask")
+  inline void multi_task_run(
+    const std::string &command, const std::vector<std::filesystem::path> &target_files,
+    const std::vector<std::filesystem::path> &check_files,
+    std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
+      nullptr,
+    const std::string &task_name = "Multitask")
   {
-    auto modified_files = utility::find_modified_files(target_files, check_files);
+    auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
     std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
@@ -581,19 +671,17 @@ namespace csb
     utility::multi_execute(
       command, modified_files, task_name,
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &dependencies,
-         const std::string &item_command, const std::string &result)
+         const std::string &item_command, std::string result)
       {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cout << "\n" + item_command + "\n" + (result_copy.empty() ? "" : result_copy + "\n");
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
         for (const auto &dependency : dependencies) utility::touch(dependency);
       },
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const int return_code, const std::string &result)
+         const int return_code, std::string result)
       {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
+        result = utility::remove_trailing_and_leading_newlines(result);
+        std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
       });
 
     std::cout << utility::small_section_divider << std::endl;
@@ -813,7 +901,6 @@ namespace csb
 
     std::filesystem::path format_directory = "build\\format\\";
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
-
     std::vector<std::filesystem::path> format_files = {};
     format_files.reserve(source_files.size() + include_files.size());
     format_files.insert(format_files.end(), source_files.begin(), source_files.end());
@@ -823,48 +910,23 @@ namespace csb
         std::remove_if(format_files.begin(), format_files.end(), [&](const std::filesystem::path &path)
                        { return std::find(exclude_files.begin(), exclude_files.end(), path) != exclude_files.end(); }),
         format_files.end());
-
-    auto modified_files =
-      utility::find_modified_files(format_files, {format_directory.string() + "[.filename].formatted"});
-    if (!modified_files.empty())
-    {
-      std::cout << std::endl << utility::small_section_divider;
-      std::cout.flush();
-    }
     std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
     std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
 
-    utility::multi_execute(
-      std::format("{} -i \"[]\"", clang_format_path.string()), modified_files, "Formatting",
-      [&](const std::filesystem::path &item, const std::vector<std::filesystem::path> &,
-          const std::string &item_command, const std::string &result)
-      {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cout << "\n" + item_command + "\n" + (result_copy.empty() ? "" : result_copy + "\n");
-        utility::touch(format_directory / item.filename().string().append(".formatted"));
-      },
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const int return_code, const std::string &result)
-      {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
-      });
-
-    if (!modified_files.empty()) std::cout << utility::small_section_divider << std::endl;
+    csb::multi_task_run(std::format("{} -i \"[]\"", clang_format_path.string()), format_files,
+                        {format_directory / "[.filename].formatted"}, nullptr, "Formatting");
   }
 
-  inline void build()
+  inline void compile()
   {
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
 
-    std::filesystem::path build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
-    if (!std::filesystem::exists(build_directory)) std::filesystem::create_directories(build_directory);
-
+    utility::state.build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
+    if (!std::filesystem::exists(utility::state.build_directory))
+      std::filesystem::create_directories(utility::state.build_directory);
     std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
     std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
                                                            : (target_configuration == RELEASE ? "MD" : "MDd");
@@ -883,11 +945,18 @@ namespace csb
     std::string compile_external_include_directories = {};
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
+    std::vector<std::filesystem::path> check_files = {utility::state.build_directory.string() + "[.filename.stem].obj",
+                                                      utility::state.build_directory.string() + "[.filename.stem].d"};
+    if (target_configuration == DEBUG)
+      check_files.push_back(utility::state.build_directory.string() + "[.filename.stem].pdb");
 
-    std::vector<std::filesystem::path> check_files = {build_directory.string() + "[.filename.stem].obj",
-                                                      build_directory.string() + "[.filename.stem].d"};
-    if (target_configuration == DEBUG) check_files.push_back(build_directory.string() + "[.filename.stem].pdb");
-    auto modified_files = utility::find_modified_files(
+    multi_task_run(
+      std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{} /Fo{} "
+                  "/Fd{}[.stem].pdb /sourceDependencies{}[.stem].d {}{}/c \"[]\"",
+                  std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
+                  compile_definitions, utility::state.build_directory.string(), utility::state.build_directory.string(),
+                  utility::state.build_directory.string(), utility::state.build_directory.string(),
+                  compile_include_directories, compile_external_include_directories),
       source_files, check_files,
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
       {
@@ -920,33 +989,14 @@ namespace csb
           pos = end + 1;
         }
         return false;
-      });
-    if (!modified_files.empty())
-    {
-      std::cout << std::endl << utility::small_section_divider;
-      std::cout.flush();
-    }
-    utility::multi_execute(
-      std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{} /Fo{} "
-                  "/Fd{}[.stem].pdb /sourceDependencies{}[.stem].d {}{}/c \"[]\"",
-                  std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
-                  compile_definitions, build_directory.string(), build_directory.string(), build_directory.string(),
-                  build_directory.string(), compile_include_directories, compile_external_include_directories),
-      modified_files, "Compilation",
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const std::string &result)
-      {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cout << "\n" + item_command + "\n" + (result_copy.empty() ? "" : result_copy + "\n");
       },
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const int return_code, const std::string &result)
-      {
-        std::string result_copy = result;
-        result_copy.erase(std::remove(result_copy.begin(), result_copy.end(), '\n'), result_copy.end());
-        std::cerr << item_command + " -> " + std::to_string(return_code) + "\n" + result_copy + "\n";
-      });
+      "Compilation");
+  }
+
+  inline void link()
+  {
+    if (!std::filesystem::exists(utility::state.build_directory))
+      throw std::runtime_error("Link called before compile.");
 
     std::string executable_option = target_artifact == STATIC_LIBRARY ? "lib" : "link";
     std::string console_option = target_subsystem == CONSOLE ? "CONSOLE" : "WINDOWS";
@@ -958,11 +1008,14 @@ namespace csb
                                                                    : "";
     std::string output_flags =
       target_artifact == DYNAMIC_LIBRARY
-        ? (target_configuration == RELEASE ? std::format("/IMPLIB:{}{}.lib ", build_directory.string(), target_name)
-                                           : std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", build_directory.string(),
-                                                         target_name, build_directory.string(), target_name))
+        ? (target_configuration == RELEASE
+             ? std::format("/IMPLIB:{}{}.lib ", utility::state.build_directory.string(), target_name)
+             : std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", utility::state.build_directory.string(), target_name,
+                           utility::state.build_directory.string(), target_name))
       : target_artifact == EXECUTABLE
-        ? (target_configuration == RELEASE ? "" : std::format("/PDB:{}{}.pdb ", build_directory.string(), target_name))
+        ? (target_configuration == RELEASE
+             ? ""
+             : std::format("/PDB:{}{}.pdb ", utility::state.build_directory.string(), target_name))
         : "";
     std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
                             : target_artifact == DYNAMIC_LIBRARY ? "dll"
@@ -974,36 +1027,22 @@ namespace csb
     for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
     std::string link_objects = {};
     for (const auto &source_file : source_files)
-      link_objects += std::format("{}{}.obj ", build_directory.string(), source_file.stem().string());
+      link_objects += std::format("{}{}.obj ", utility::state.build_directory.string(), source_file.stem().string());
 
-    if (target_artifact == STATIC_LIBRARY &&
-        std::filesystem::exists(build_directory.string() + target_name + "." + extension) && modified_files.empty())
-      return;
-    if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) && target_configuration == DEBUG &&
-        (std::filesystem::exists(build_directory.string() + target_name + "." + extension) &&
-         std::filesystem::exists(build_directory.string() + target_name + ".pdb")) &&
-        modified_files.empty())
-      return;
-    if ((target_artifact == DYNAMIC_LIBRARY || target_artifact == EXECUTABLE) && target_configuration == RELEASE &&
-        (std::filesystem::exists(build_directory.string() + target_name + "." + extension)) && modified_files.empty())
-      return;
-    utility::execute(
-      std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
-                  utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                  link_library_directories, link_libraries, link_objects, output_flags, build_directory.string(),
-                  target_name, extension),
-      [&](const std::string &command, const std::string &result)
-      {
-        std::cout << "\n" + command + "\n" + result;
-        std::cout.flush();
-      },
-      [&](const std::string &command, const int return_code, const std::string &result)
-      {
-        std::cerr << command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-        throw std::runtime_error("Linking errors occurred.");
-      });
+    std::vector<std::filesystem::path> target_files = {};
+    target_files.reserve(source_files.size() + include_files.size());
+    target_files.insert(target_files.end(), source_files.begin(), source_files.end());
+    target_files.insert(target_files.end(), include_files.begin(), include_files.end());
+    std::vector<std::filesystem::path> check_files = {utility::state.build_directory.string() + target_name + "." +
+                                                      extension};
+    if (target_configuration == DEBUG)
+      check_files.push_back(utility::state.build_directory.string() + target_name + ".pdb");
 
-    if (!modified_files.empty()) std::cout << utility::small_section_divider << std::endl;
+    task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
+                         utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
+                         link_library_directories, link_libraries, link_objects, output_flags,
+                         utility::state.build_directory.string(), target_name, extension),
+             target_files, check_files);
   }
 }
 
