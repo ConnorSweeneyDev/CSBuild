@@ -7,7 +7,7 @@ A zero dependency, cross-platform build system for C++ projects.
 - [x] **Simple Configuration**: Uses a `csb.cpp` file in the root for configuration.
 - [x] **Automatic Incremental Builds**: Dependencies are tracked, and only affected steps are re-run.
 - [x] **Multi-Project Support**: Easily use other projects that use CSBuild as a build system.
-- [ ] **Custom Build Steps**: Define custom build steps for specialized tasks.
+- [x] **Custom Build Steps**: Define custom build steps for specialized tasks.
 - [x] **VCPKG Integration**: Integrates with VCPKG for package management.
 - [x] **Clangd Integration**: Generates a `compile_commands.json` file for Clangd support.
 - [x] **Clang Format Integration**: Integrates with Clang Format for code formatting.
