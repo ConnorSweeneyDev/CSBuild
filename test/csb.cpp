@@ -18,8 +18,8 @@ int csb_main()
   csb::vcpkg_install("2025.08.27");
   csb::subproject_install({{"ConnorSweeneyDev/CSBuildSubproject", "0.0.0", EXECUTABLE}});
 
-  csb::task_run("CSBuildSubproject --hello", {"build/csbuildsubproject/hello.marker"});
-  csb::task_run("CSBuildSubproject --goodbye", {"build/csbuildsubproject/goodbye.marker"});
+  csb::task_run("CSBuildSubproject --hello", "build/csbuildsubproject/hello.marker");
+  csb::task_run("CSBuildSubproject --goodbye", "build/csbuildsubproject/goodbye.marker");
 
   csb::clang_version = "21.1.1";
   csb::clang_compile_commands();

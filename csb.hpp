@@ -201,7 +201,7 @@ namespace csb::utility
                             std::pair<const std::filesystem::path, std::vector<std::filesystem::path>>>;
   };
   template <iterable container_type>
-  void multi_execute(const std::string &command, const container_type &container, const std::string &task_name,
+  void multi_execute(const std::string &command, const container_type &container,
                      std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
                                         const std::string &, const std::string &)>
                        on_success = nullptr,
@@ -261,7 +261,7 @@ namespace csb::utility
         }
       return;
     }
-    if (should_stop) throw std::runtime_error(task_name + " errors occurred.");
+    if (should_stop) throw std::runtime_error("Errors occurred.");
   }
 
   inline void live_execute(const std::string &command, const std::string &error_message, bool print_command)
@@ -626,8 +626,7 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &check_files,
-                             const std::string &task_name = "Multitask")
+  inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &check_files)
   {
     std::vector<std::filesystem::path> target_files = {};
     for (const auto &file : check_files)
@@ -637,7 +636,7 @@ namespace csb
     std::cout.flush();
 
     utility::multi_execute(
-      command, target_files, task_name,
+      command, target_files,
       [](const std::filesystem::path item, const std::vector<std::filesystem::path> &, const std::string &item_command,
          std::string result)
       {
@@ -659,8 +658,7 @@ namespace csb
     const std::string &command, const std::vector<std::filesystem::path> &target_files,
     const std::vector<std::filesystem::path> &check_files,
     std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
-      nullptr,
-    const std::string &task_name = "Multitask")
+      nullptr)
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
@@ -668,7 +666,7 @@ namespace csb
     std::cout.flush();
 
     utility::multi_execute(
-      command, modified_files, task_name,
+      command, modified_files,
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &dependencies,
          const std::string &item_command, std::string result)
       {
@@ -913,7 +911,7 @@ namespace csb
     std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
 
     csb::multi_task_run(std::format("{} -i \"[]\"", clang_format_path.string()), format_files,
-                        {format_directory / "[.filename].formatted"}, nullptr, "Formatting");
+                        {format_directory / "[.filename].formatted"});
   }
 
   inline void compile()
@@ -988,8 +986,7 @@ namespace csb
           pos = end + 1;
         }
         return false;
-      },
-      "Compilation");
+      });
   }
 
   inline void link()
