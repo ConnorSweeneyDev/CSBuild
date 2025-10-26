@@ -372,7 +372,7 @@ namespace csb::utility
   {
     bool needs_bootstrap = false;
 
-    std::filesystem::path vcpkg_path = std::format("build\\vcpkg-{}\\vcpkg.exe", vcpkg_version);
+    auto vcpkg_path = std::filesystem::path("build") / std::format("vcpkg-{}", vcpkg_version) / "vcpkg.exe";
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
       needs_bootstrap = true;
@@ -446,7 +446,7 @@ namespace csb::utility
 
   inline std::filesystem::path bootstrap_clang(const std::string &clang_version)
   {
-    std::filesystem::path clang_path = std::format("build\\clang-{}", clang_version);
+    auto clang_path = std::filesystem::path("build") / std::format("clang-{}", clang_version);
     if (std::filesystem::exists(clang_path)) return clang_path;
     std::cout << std::endl;
 
@@ -457,14 +457,16 @@ namespace csb::utility
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-{}-pc-windows-msvc.tar.xz",
       clang_version, clang_version, clang_architecture);
     std::cout << "Downloading archive at '" + url + "'..." << std::endl;
-    utility::live_execute(std::format("curl -f -L -C - -o build\\temp.tar.xz {}", url), "Failed to download archive.",
-                          false);
+    utility::live_execute(
+      std::format("curl -f -L -C - -o {} {}", (std::filesystem::path("build") / "temp.tar.xz").string(), url),
+      "Failed to download archive.", false);
     std::cout << "Extracting archive... ";
     std::cout.flush();
-    utility::live_execute("tar -xf build\\temp.tar.xz -C build", "Failed to extract archive.", false);
-    std::filesystem::remove("build\\temp.tar.xz");
-    std::filesystem::path extracted_path =
-      std::format("build\\clang+llvm-{}-{}-pc-windows-msvc", clang_version, clang_architecture);
+    utility::live_execute(std::format("tar -xf {} -C build", (std::filesystem::path("build") / "temp.tar.xz").string()),
+                          "Failed to extract archive.", false);
+    std::filesystem::remove(std::filesystem::path("build") / "temp.tar.xz");
+    auto extracted_path = std::filesystem::path("build") /
+                          std::format("clang+llvm-{}-{}-pc-windows-msvc", clang_version, clang_architecture);
     if (!std::filesystem::exists(extracted_path))
       throw std::runtime_error("Failed to find " + extracted_path.string() + ".");
 
@@ -690,7 +692,7 @@ namespace csb
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
 
-    std::filesystem::path subproject_directory = "build\\subproject\\";
+    auto subproject_directory = std::filesystem::path("build") / "subproject";
     if (!std::filesystem::exists(subproject_directory)) std::filesystem::create_directories(subproject_directory);
 
     for (const auto &subproject : subprojects)
@@ -748,8 +750,7 @@ namespace csb
       }
 
       std::cout << (ran_git ? "\n" : "") << "Building subproject " + repo_name + " (" + version + ")..." << std::endl;
-      std::filesystem::path build_path =
-        subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug");
+      auto build_path = subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug");
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
 
       std::string upper_architecture = utility::state.architecture;
@@ -789,11 +790,11 @@ namespace csb
       target_configuration = utility::state.forced_configuration.value();
     std::cout << std::endl << utility::small_section_divider << std::endl;
 
-    std::filesystem::path vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
+    auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
     std::string vcpkg_triplet = utility::state.architecture + "-windows" + (target_linkage == STATIC ? "-static" : "") +
                                 (target_configuration == RELEASE ? "-release" : "");
-    std::filesystem::path vcpkg_installed_directory = "build\\vcpkg_installed";
+    auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
     utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
                                       vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
@@ -802,7 +803,8 @@ namespace csb
 
     std::pair<std::filesystem::path, std::filesystem::path> outputs = {
       vcpkg_installed_directory / vcpkg_triplet / "include",
-      vcpkg_installed_directory / vcpkg_triplet / (target_configuration == RELEASE ? "lib" : "debug\\lib")};
+      vcpkg_installed_directory / vcpkg_triplet /
+        (target_configuration == RELEASE ? "lib" : std::filesystem::path("debug") / "lib")};
     if (!std::filesystem::exists(outputs.first) || !std::filesystem::exists(outputs.second))
       throw std::runtime_error("vcpkg outputs not found.");
     external_include_directories.push_back(outputs.first);
@@ -815,6 +817,11 @@ namespace csb
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
+    std::vector<std::filesystem::path> target_files = {};
+    target_files.reserve(source_files.size() + include_files.size());
+    target_files.insert(target_files.end(), source_files.begin(), source_files.end());
+    target_files.insert(target_files.end(), include_files.begin(), include_files.end());
+    if (utility::find_modified_files(target_files, {"compile_commands.json"}).empty()) return;
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
     std::cout << std::endl << utility::small_section_divider;
@@ -839,7 +846,7 @@ namespace csb
     };
 
     std::filesystem::path compile_commands_path = "compile_commands.json";
-    std::string build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
+    auto build_directory = std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
     std::string content =
       std::format("[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
                   "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
@@ -870,9 +877,8 @@ namespace csb
         content += std::format("-I\\\"{}\\\" ", escape_backslashes(directory.string()));
       for (const auto &directory : external_include_directories)
         content += std::format("-isystem\\\"{}\\\" ", escape_backslashes(directory.string()));
-      content += std::format(
-        "-c \\\"{}\\\" -o \\\"{}\\\"\"\n", escape_backslashes(std::filesystem::absolute(*iterator).string()),
-        escape_backslashes((std::filesystem::absolute(build_directory) / (iterator->stem().string() + ".o")).string()));
+      content += std::format("-c \\\"{}\\\" -o \\\"{}\\\"\"\n", escape_backslashes((*iterator).string()),
+                             escape_backslashes((build_directory / (iterator->stem().string() + ".o")).string()));
       content += "  }";
       if (++iterator != source_files.end())
         content += ",\n";
@@ -896,7 +902,7 @@ namespace csb
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
 
-    std::filesystem::path format_directory = "build\\format\\";
+    auto format_directory = std::filesystem::path("build") / "format";
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
     std::vector<std::filesystem::path> format_files = {};
     format_files.reserve(source_files.size() + include_files.size());
@@ -907,8 +913,8 @@ namespace csb
         std::remove_if(format_files.begin(), format_files.end(), [&](const std::filesystem::path &path)
                        { return std::find(exclude_files.begin(), exclude_files.end(), path) != exclude_files.end(); }),
         format_files.end());
-    std::filesystem::path clang_path = utility::bootstrap_clang(clang_version);
-    std::filesystem::path clang_format_path = clang_path / "clang-format.exe";
+    auto clang_path = utility::bootstrap_clang(clang_version);
+    auto clang_format_path = clang_path / "clang-format.exe";
 
     csb::multi_task_run(std::format("{} -i \"[]\"", clang_format_path.string()), format_files,
                         {format_directory / "[.filename].formatted"});
@@ -921,7 +927,8 @@ namespace csb
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
 
-    utility::state.build_directory = target_configuration == RELEASE ? "build\\release\\" : "build\\debug\\";
+    utility::state.build_directory =
+      std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
     if (!std::filesystem::exists(utility::state.build_directory))
       std::filesystem::create_directories(utility::state.build_directory);
     std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
@@ -942,18 +949,18 @@ namespace csb
     std::string compile_external_include_directories = {};
     for (const auto &directory : external_include_directories)
       compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
-    std::vector<std::filesystem::path> check_files = {utility::state.build_directory.string() + "[.filename.stem].obj",
-                                                      utility::state.build_directory.string() + "[.filename.stem].d"};
-    if (target_configuration == DEBUG)
-      check_files.push_back(utility::state.build_directory.string() + "[.filename.stem].pdb");
+    std::vector<std::filesystem::path> check_files = {utility::state.build_directory / "[.filename.stem].obj",
+                                                      utility::state.build_directory / "[.filename.stem].d"};
+    if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / "[.filename.stem].pdb");
 
     multi_task_run(
-      std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{} /Fo{} "
-                  "/Fd{}[.stem].pdb /sourceDependencies{}[.stem].d {}{}/c \"[]\"",
+      std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
+                  "/Fd{} /sourceDependencies{} {}{}/c \"[]\"",
                   std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
                   compile_definitions, utility::state.build_directory.string(), utility::state.build_directory.string(),
-                  utility::state.build_directory.string(), utility::state.build_directory.string(),
-                  compile_include_directories, compile_external_include_directories),
+                  (utility::state.build_directory / "[.stem].pdb").string(),
+                  (utility::state.build_directory / "[.stem].d").string(), compile_include_directories,
+                  compile_external_include_directories),
       source_files, check_files,
       [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
       {
@@ -1005,13 +1012,13 @@ namespace csb
     std::string output_flags =
       target_artifact == DYNAMIC_LIBRARY
         ? (target_configuration == RELEASE
-             ? std::format("/IMPLIB:{}{}.lib ", utility::state.build_directory.string(), target_name)
-             : std::format("/PDB:{}{}.pdb /IMPLIB:{}{}.lib ", utility::state.build_directory.string(), target_name,
-                           utility::state.build_directory.string(), target_name))
+             ? std::format("/IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string())
+             : std::format("/PDB:{}.pdb /IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string(),
+                           (utility::state.build_directory / target_name).string()))
       : target_artifact == EXECUTABLE
         ? (target_configuration == RELEASE
              ? ""
-             : std::format("/PDB:{}{}.pdb ", utility::state.build_directory.string(), target_name))
+             : std::format("/PDB:{}.pdb ", (utility::state.build_directory / target_name).string()))
         : "";
     std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
                             : target_artifact == DYNAMIC_LIBRARY ? "dll"
@@ -1023,21 +1030,19 @@ namespace csb
     for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
     std::string link_objects = {};
     for (const auto &source_file : source_files)
-      link_objects += std::format("{}{}.obj ", utility::state.build_directory.string(), source_file.stem().string());
+      link_objects += std::format("{}.obj ", (utility::state.build_directory / source_file.stem()).string());
 
     std::vector<std::filesystem::path> target_files = {};
     target_files.reserve(source_files.size() + include_files.size());
     target_files.insert(target_files.end(), source_files.begin(), source_files.end());
     target_files.insert(target_files.end(), include_files.begin(), include_files.end());
-    std::vector<std::filesystem::path> check_files = {utility::state.build_directory.string() + target_name + "." +
-                                                      extension};
-    if (target_configuration == DEBUG)
-      check_files.push_back(utility::state.build_directory.string() + target_name + ".pdb");
+    std::vector<std::filesystem::path> check_files = {utility::state.build_directory / (target_name + "." + extension)};
+    if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / (target_name + ".pdb"));
 
-    task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}{}.{}", executable_option,
+    task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
                          utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
                          link_library_directories, link_libraries, link_objects, output_flags,
-                         utility::state.build_directory.string(), target_name, extension),
+                         (utility::state.build_directory / (target_name + "." + extension)).string()),
              target_files, check_files);
   }
 }
