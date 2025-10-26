@@ -448,7 +448,7 @@ namespace csb::utility
   {
     auto clang_path = std::filesystem::path("build") / std::format("clang-{}", clang_version);
     if (std::filesystem::exists(clang_path)) return clang_path;
-    std::cout << std::endl;
+    std::cout << std::endl << small_section_divider << std::endl;
 
     if (state.architecture != "x64" && state.architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
@@ -474,7 +474,7 @@ namespace csb::utility
     for (const auto &entry : std::filesystem::directory_iterator(extracted_path / "bin"))
       if (entry.is_regular_file()) std::filesystem::rename(entry.path(), clang_path / entry.path().filename());
     std::filesystem::remove_all(extracted_path);
-    std::cout << "done." << std::endl;
+    std::cout << "done." << std::endl << small_section_divider << std::endl;
 
     if (!std::filesystem::exists(clang_path)) throw std::runtime_error("Failed to find " + clang_path.string() + ".");
     return clang_path;
@@ -497,8 +497,6 @@ namespace csb
   inline std::vector<std::filesystem::path> library_directories = {};
   inline std::vector<std::string> libraries = {};
   inline std::vector<std::string> definitions = {};
-
-  inline std::string clang_version = {};
 
   inline std::vector<std::filesystem::path> files_from(const std::filesystem::path &directory,
                                                        const std::set<std::string> &extensions, bool recursive = true)
@@ -591,43 +589,6 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void live_task_run(const std::string &command)
-  {
-    std::cout << std::endl << utility::small_section_divider << std::endl;
-
-    utility::live_execute(command, "Failed to run task: " + command, true);
-
-    std::cout << utility::small_section_divider << std::endl;
-  }
-
-  inline void live_task_run(const std::string &command, const std::filesystem::path &check_file)
-  {
-    if (std::filesystem::exists(check_file)) return;
-    std::cout << std::endl << utility::small_section_divider << std::endl;
-
-    utility::live_execute(command, "Failed to run task: " + command, true);
-    utility::touch(check_file);
-
-    std::cout << utility::small_section_divider << std::endl;
-  }
-
-  inline void live_task_run(
-    const std::string &command, const std::vector<std::filesystem::path> &target_files,
-    const std::vector<std::filesystem::path> &check_files,
-    std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
-      nullptr)
-  {
-    auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
-    if (modified_files.empty()) return;
-    std::cout << std::endl << utility::small_section_divider << std::endl;
-
-    utility::live_execute(command, "Failed to run task: " + command, true);
-    for (const auto &file : modified_files)
-      for (const auto &dependency : file.second) utility::touch(dependency);
-
-    std::cout << utility::small_section_divider << std::endl;
-  }
-
   inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &check_files)
   {
     std::vector<std::filesystem::path> target_files = {};
@@ -682,6 +643,43 @@ namespace csb
         result = utility::remove_trailing_and_leading_newlines(result);
         std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
       });
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void live_task_run(const std::string &command)
+  {
+    std::cout << std::endl << utility::small_section_divider << std::endl;
+
+    utility::live_execute(command, "Failed to run task: " + command, true);
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void live_task_run(const std::string &command, const std::filesystem::path &check_file)
+  {
+    if (std::filesystem::exists(check_file)) return;
+    std::cout << std::endl << utility::small_section_divider << std::endl;
+
+    utility::live_execute(command, "Failed to run task: " + command, true);
+    utility::touch(check_file);
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void live_task_run(
+    const std::string &command, const std::vector<std::filesystem::path> &target_files,
+    const std::vector<std::filesystem::path> &check_files,
+    std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
+      nullptr)
+  {
+    auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
+    if (modified_files.empty()) return;
+    std::cout << std::endl << utility::small_section_divider << std::endl;
+
+    utility::live_execute(command, "Failed to run task: " + command, true);
+    for (const auto &file : modified_files)
+      for (const auto &dependency : file.second) utility::touch(dependency);
 
     std::cout << utility::small_section_divider << std::endl;
   }
@@ -813,9 +811,8 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void clang_compile_commands()
+  inline void generate_compile_commands()
   {
-    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
     std::vector<std::filesystem::path> target_files = {};
     target_files.reserve(source_files.size() + include_files.size());
@@ -826,8 +823,6 @@ namespace csb
       target_configuration = utility::state.forced_configuration.value();
     std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
-
-    utility::bootstrap_clang(clang_version);
 
     std::cout << std::endl << "Generating compile_commands.json... ";
     std::cout.flush();
@@ -897,7 +892,7 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void clang_format(std::vector<std::filesystem::path> exclude_files = {})
+  inline void clang_format(const std::string &clang_version, std::vector<std::filesystem::path> exclude_files = {})
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");

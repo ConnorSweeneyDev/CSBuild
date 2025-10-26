@@ -21,12 +21,11 @@ int csb_main()
   csb::multi_task_run("CSBuildSubproject --[.filename.stem]",
                       {"build/csbuildsubproject/hello.marker", "build/csbuildsubproject/goodbye.marker"});
 
-  csb::clang_version = "21.1.1";
-  csb::clang_compile_commands();
-  csb::clang_format();
-
+  csb::generate_compile_commands();
+  csb::clang_format("21.1.1");
   csb::compile();
   csb::link();
+
   return CSB_SUCCESS;
 }
 
