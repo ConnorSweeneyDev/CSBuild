@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cctype>
 #include <concepts>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <execution>
@@ -17,6 +18,8 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -24,9 +27,89 @@
 #include <utility>
 #include <vector>
 
-#ifdef _WIN32
-  #include <stdio.h>
-  #include <stdlib.h>
+enum platform
+{
+  UNDEFINED,
+  WINDOWS,
+  LINUX
+};
+
+#if defined(_WIN32)
+
+  #if defined(_M_X64) || defined(__amd64__)
+    #define ARCHITECTURE "x64"
+  #elif defined(_M_IX86)
+    #define ARCHITECTURE "x86"
+  #elif defined(_M_ARM64)
+    #define ARCHITECTURE "arm64"
+  #elif defined(_M_ARM)
+    #define ARCHITECTURE "arm"
+  #else
+    #define ARCHITECTURE "unknown"
+  #endif
+inline platform current_platform = WINDOWS;
+
+inline std::string get_env(const std::string &name, const std::string &error_message)
+{
+  char *value = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&value, &len, name.c_str()) != 0 || !value)
+    throw std::runtime_error(error_message + "\n" + name + " environment variable not found.");
+  std::string result = std::string(value);
+  free(value);
+  return result;
+}
+
+inline void set_env(const std::string &name, const std::string &value)
+{
+  if (_putenv_s(name.c_str(), value.c_str()) != 0)
+    throw std::runtime_error("Failed to set environment variable: " + name + ".");
+}
+
+inline FILE *pipe_open(const std::string &command, const std::string &mode)
+{
+  return _popen(command.c_str(), mode.c_str());
+}
+
+inline int pipe_close(FILE *pipe) { return _pclose(pipe); }
+
+#elif defined(__linux__)
+
+  #if defined(__x86_64__) || defined(__amd64__)
+    #define ARCHITECTURE "x64"
+  #elif defined(__i386__)
+    #define ARCHITECTURE "x86"
+  #elif defined(__aarch64__)
+    #define ARCHITECTURE "arm64"
+  #elif defined(__arm__)
+    #define ARCHITECTURE "arm"
+  #else
+    #define ARCHITECTURE "unknown"
+  #endif
+inline platform current_platform = LINUX;
+
+inline std::string get_env(const std::string &name, const std::string &error_message)
+{
+  const char *value = std::getenv(name.c_str());
+  if (!value) throw std::runtime_error(error_message + "\n" + name + " environment variable not found.");
+  return std::string(value);
+}
+
+inline void set_env(const std::string &name, const std::string &value)
+{
+  if (setenv(name.c_str(), value.c_str(), 1) != 0)
+    throw std::runtime_error("Failed to set environment variable: " + name + ".");
+}
+
+inline FILE *pipe_open(const std::string &command, const std::string &mode)
+{
+  return popen(command.c_str(), mode.c_str());
+}
+
+inline int pipe_close(FILE *pipe) { return pclose(pipe); }
+
+#else
+inline platform current_platform = UNDEFINED;
 #endif
 
 enum artifact
@@ -64,7 +147,7 @@ enum configuration
 enum subsystem
 {
   CONSOLE,
-  WINDOWS
+  WINDOW
 };
 
 namespace csb::utility
@@ -97,12 +180,7 @@ namespace csb::utility
 
   inline std::string get_environment_variable(const std::string &name, const std::string &error_message)
   {
-    char *value = nullptr;
-    size_t len = 0;
-    if (_dupenv_s(&value, &len, name.c_str()) != 0 || !value)
-      throw std::runtime_error(error_message + "\n" + name + " environment variable not found.");
-    std::string result = std::string(value);
-    free(value);
+    std::string result = get_env(name, error_message);
     if (result.empty()) throw std::runtime_error(name + " environment variable is empty.");
     return result;
   }
@@ -178,12 +256,12 @@ namespace csb::utility
                       std::function<void(const std::string &, const std::string &)> on_success = nullptr,
                       std::function<void(const std::string &, const int, const std::string &)> on_failure = nullptr)
   {
-    FILE *pipe = _popen((command).c_str(), "r");
+    FILE *pipe = pipe_open((command).c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
     char buffer[512];
     std::string result = {};
     while (fgets(buffer, sizeof(buffer), pipe)) result += buffer;
-    int return_code = _pclose(pipe);
+    int return_code = pipe_close(pipe);
     if (return_code != 0)
     {
       if (on_failure) on_failure(command, return_code, result);
@@ -226,7 +304,7 @@ namespace csb::utility
                     }
 
                     std::string item_command = path_placeholder_replace(item_path, command);
-                    FILE *pipe = _popen((item_command + " 2>&1").c_str(), "r");
+                    FILE *pipe = pipe_open((item_command + " 2>&1").c_str(), "r");
                     if (!pipe)
                     {
                       std::lock_guard<std::mutex> lock(exceptions_mutex);
@@ -237,7 +315,7 @@ namespace csb::utility
                     char buffer[512];
                     std::string result = {};
                     while (fgets(buffer, sizeof(buffer), pipe)) result += buffer;
-                    int return_code = _pclose(pipe);
+                    int return_code = pipe_close(pipe);
                     if (return_code != 0)
                     {
                       should_stop = true;
@@ -268,17 +346,17 @@ namespace csb::utility
   {
     if (print_command) std::cout << command << std::endl;
 
-    FILE *pipe = _popen((command + " 2>&1").c_str(), "r");
+    FILE *pipe = pipe_open((command + " 2>&1").c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
 
-    int c;
-    while ((c = fgetc(pipe)) != EOF)
+    int character;
+    while ((character = fgetc(pipe)) != EOF)
     {
-      std::cout << static_cast<char>(c);
+      std::cout << static_cast<char>(character);
       std::cout.flush();
     }
 
-    int return_code = _pclose(pipe);
+    int return_code = pipe_close(pipe);
     if (return_code != 0) throw std::runtime_error(error_message);
   }
 
@@ -410,8 +488,8 @@ namespace csb::utility
     {
       needs_bootstrap = true;
       std::cout << "Checking out to vcpkg " + vcpkg_version + "..." << std::endl;
-      live_execute("cd " + vcpkg_path.parent_path().string() + " && git -c advice.detachedHead=false checkout " +
-                     vcpkg_version,
+      live_execute("cd " + vcpkg_path.parent_path().string() +
+                     " && git -c advice.detachedHead=false checkout --progress " + vcpkg_version,
                    "Failed to checkout vcpkg version.", false);
     }
 
@@ -453,9 +531,11 @@ namespace csb::utility
     if (state.architecture != "x64" && state.architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
     std::string clang_architecture = state.architecture == "x64" ? "x86_64" : "aarch64";
-    std::string url = std::format(
-      "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/clang+llvm-{}-{}-pc-windows-msvc.tar.xz",
-      clang_version, clang_version, clang_architecture);
+    std::filesystem::path archive = std::format(
+      "{}-{}-{}.tar.xz", current_platform == WINDOWS ? "clang+llvm" : "LLVM", clang_version,
+      current_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture);
+    std::string url = std::format("https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}", clang_version,
+                                  archive.string());
     std::cout << "Downloading archive at '" + url + "'..." << std::endl;
     utility::live_execute(
       std::format("curl -f -L -C - -o {} {}", (std::filesystem::path("build") / "temp.tar.xz").string(), url),
@@ -465,8 +545,7 @@ namespace csb::utility
     utility::live_execute(std::format("tar -xf {} -C build", (std::filesystem::path("build") / "temp.tar.xz").string()),
                           "Failed to extract archive.", false);
     std::filesystem::remove(std::filesystem::path("build") / "temp.tar.xz");
-    auto extracted_path = std::filesystem::path("build") /
-                          std::format("clang+llvm-{}-{}-pc-windows-msvc", clang_version, clang_architecture);
+    auto extracted_path = "build" / archive.stem().stem();
     if (!std::filesystem::exists(extracted_path))
       throw std::runtime_error("Failed to find " + extracted_path.string() + ".");
 
@@ -741,8 +820,8 @@ namespace csb
       if (current_hash != target_hash)
       {
         std::cout << "Checking out to subproject " + name + " " + version + "..." << std::endl;
-        utility::live_execute("cd " + subproject_path.string() + " && git -c advice.detachedHead=false checkout " +
-                                version,
+        utility::live_execute("cd " + subproject_path.string() +
+                                " && git -c advice.detachedHead=false checkout --progress " + version,
                               "Failed to checkout subproject version: " + version, false);
         ran_git = true;
       }
@@ -754,20 +833,23 @@ namespace csb
       std::string upper_architecture = utility::state.architecture;
       std::transform(upper_architecture.begin(), upper_architecture.end(), upper_architecture.begin(),
                      [](unsigned char c) { return std::toupper(c); });
-      utility::live_execute("cd " + subproject_path.string() +
-                              " && cl /nologo /EHsc /std:c++20 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:" +
-                              upper_architecture + " /OUT:build\\csb.exe build\\csb.obj && build\\csb.exe --" +
-                              (target_configuration == RELEASE ? "release" : "debug"),
+      std::string build_command = {};
+      if (current_platform == WINDOWS)
+        build_command = std::format("cl /nologo /EHsc /std:c++20 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
+                                    "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe --{}",
+                                    upper_architecture, target_configuration == RELEASE ? "release" : "debug");
+      else if (current_platform == LINUX)
+        build_command = std::format("g++ -std=c++20 -O2 -o build/csb csb.cpp && build/csb --{}",
+                                    target_configuration == RELEASE ? "release" : "debug");
+      utility::live_execute(std::format("cd {} && {}", subproject_path.string(), build_command),
                             "Failed to install subproject: " + name, false);
 
       if (artifact_type == EXECUTABLE)
       {
-        char *current_path = {};
-        size_t length = {};
-        _dupenv_s(&current_path, &length, "PATH");
-        std::string new_path = std::string(current_path) + ";" + std::filesystem::absolute(build_path).string();
-        _putenv_s("PATH", new_path.c_str());
-        free(current_path);
+        std::string new_path = get_env("PATH", "Could not get PATH environment variable.") +
+                               (current_platform == WINDOWS ? ";" : ":") +
+                               std::filesystem::absolute(build_path).string();
+        set_env("PATH", new_path);
       }
       else if (artifact_type == STATIC_LIBRARY || artifact_type == DYNAMIC_LIBRARY)
       {
@@ -790,8 +872,13 @@ namespace csb
 
     auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
-    std::string vcpkg_triplet = utility::state.architecture + "-windows" + (target_linkage == STATIC ? "-static" : "") +
-                                (target_configuration == RELEASE ? "-release" : "");
+    std::string vcpkg_triplet = {};
+    if (current_platform == WINDOWS)
+      vcpkg_triplet =
+        std::format("{}-windows{}{}", utility::state.architecture, (target_linkage == STATIC ? "-static" : ""),
+                    (target_configuration == RELEASE ? "-release" : ""));
+    else if (current_platform == LINUX)
+      vcpkg_triplet = std::format("{}-linux", utility::state.architecture);
     auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
     utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
@@ -922,73 +1009,77 @@ namespace csb
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
 
-    utility::state.build_directory =
-      std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
-    if (!std::filesystem::exists(utility::state.build_directory))
-      std::filesystem::create_directories(utility::state.build_directory);
-    std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
-    std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
-                                                           : (target_configuration == RELEASE ? "MD" : "MDd");
-    std::string compile_definitions = {};
-    for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
-    std::vector<std::filesystem::path> include_directories = {};
-    for (const auto &include_file : include_files)
+    if (current_platform == WINDOWS)
     {
-      if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
-                                                      include_file.parent_path()) == include_directories.end())
-        include_directories.push_back(include_file.parent_path());
-    }
-    std::string compile_include_directories = {};
-    for (const auto &directory : include_directories)
-      compile_include_directories += std::format("/I\"{}\" ", directory.string());
-    std::string compile_external_include_directories = {};
-    for (const auto &directory : external_include_directories)
-      compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
-    std::vector<std::filesystem::path> check_files = {utility::state.build_directory / "[.filename.stem].obj",
-                                                      utility::state.build_directory / "[.filename.stem].d"};
-    if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / "[.filename.stem].pdb");
-
-    multi_task_run(
-      std::format("cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-                  "/Fd{} /sourceDependencies{} {}{}/c \"[]\"",
-                  std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
-                  compile_definitions, utility::state.build_directory.string(), utility::state.build_directory.string(),
-                  (utility::state.build_directory / "[.stem].pdb").string(),
-                  (utility::state.build_directory / "[.stem].d").string(), compile_include_directories,
-                  compile_external_include_directories),
-      source_files, check_files,
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
+      utility::state.build_directory =
+        std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
+      if (!std::filesystem::exists(utility::state.build_directory))
+        std::filesystem::create_directories(utility::state.build_directory);
+      std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
+      std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
+                                                             : (target_configuration == RELEASE ? "MD" : "MDd");
+      std::string compile_definitions = {};
+      for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
+      std::vector<std::filesystem::path> include_directories = {};
+      for (const auto &include_file : include_files)
       {
-        auto object_time = std::filesystem::last_write_time(checked_files[0]);
-        std::filesystem::path dependency_path = checked_files[1];
+        if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
+                                                        include_file.parent_path()) == include_directories.end())
+          include_directories.push_back(include_file.parent_path());
+      }
+      std::string compile_include_directories = {};
+      for (const auto &directory : include_directories)
+        compile_include_directories += std::format("/I\"{}\" ", directory.string());
+      std::string compile_external_include_directories = {};
+      for (const auto &directory : external_include_directories)
+        compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
+      std::vector<std::filesystem::path> check_files = {utility::state.build_directory / "[.filename.stem].obj",
+                                                        utility::state.build_directory / "[.filename.stem].d"};
+      if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / "[.filename.stem].pdb");
 
-        std::ifstream dependency_file(dependency_path);
-        if (!dependency_file.is_open()) return true;
-        std::string json_content((std::istreambuf_iterator<char>(dependency_file)), std::istreambuf_iterator<char>());
-        dependency_file.close();
-
-        size_t includes_start = json_content.find("\"Includes\": [");
-        if (includes_start == std::string::npos) return true;
-        size_t includes_end = json_content.find("]", includes_start);
-        if (includes_end == std::string::npos) return true;
-
-        std::string includes_section = json_content.substr(includes_start + 13, includes_end - includes_start - 13);
-        size_t pos = 0;
-        while ((pos = includes_section.find("\"", pos)) != std::string::npos)
+      multi_task_run(
+        std::format(
+          "cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
+          "/Fd{} /sourceDependencies{} {}{}/c \"[]\"",
+          std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
+          compile_definitions, utility::state.build_directory.string(), utility::state.build_directory.string(),
+          (utility::state.build_directory / "[.stem].pdb").string(),
+          (utility::state.build_directory / "[.stem].d").string(), compile_include_directories,
+          compile_external_include_directories),
+        source_files, check_files,
+        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
         {
-          size_t start = pos + 1;
-          size_t end = includes_section.find("\"", start);
-          if (end == std::string::npos) break;
-          std::filesystem::path include_path = includes_section.substr(start, end - start);
-          if (std::filesystem::exists(include_path))
+          auto object_time = std::filesystem::last_write_time(checked_files[0]);
+          std::filesystem::path dependency_path = checked_files[1];
+
+          std::ifstream dependency_file(dependency_path);
+          if (!dependency_file.is_open()) return true;
+          std::string json_content((std::istreambuf_iterator<char>(dependency_file)), std::istreambuf_iterator<char>());
+          dependency_file.close();
+
+          size_t includes_start = json_content.find("\"Includes\": [");
+          if (includes_start == std::string::npos) return true;
+          size_t includes_end = json_content.find("]", includes_start);
+          if (includes_end == std::string::npos) return true;
+
+          std::string includes_section = json_content.substr(includes_start + 13, includes_end - includes_start - 13);
+          size_t pos = 0;
+          while ((pos = includes_section.find("\"", pos)) != std::string::npos)
           {
-            auto include_time = std::filesystem::last_write_time(include_path);
-            if (include_time > object_time) return true;
+            size_t start = pos + 1;
+            size_t end = includes_section.find("\"", start);
+            if (end == std::string::npos) break;
+            std::filesystem::path include_path = includes_section.substr(start, end - start);
+            if (std::filesystem::exists(include_path))
+            {
+              auto include_time = std::filesystem::last_write_time(include_path);
+              if (include_time > object_time) return true;
+            }
+            pos = end + 1;
           }
-          pos = end + 1;
-        }
-        return false;
-      });
+          return false;
+        });
+    }
   }
 
   inline void link()
@@ -996,49 +1087,53 @@ namespace csb
     if (!std::filesystem::exists(utility::state.build_directory))
       throw std::runtime_error("Link called before compile.");
 
-    std::string executable_option = target_artifact == STATIC_LIBRARY ? "lib" : "link";
-    std::string console_option = target_subsystem == CONSOLE ? "CONSOLE" : "WINDOWS";
-    std::string link_debug_flags = target_configuration == RELEASE     ? ""
-                                   : target_artifact == STATIC_LIBRARY ? ""
-                                                                       : "/DEBUG:FULL ";
-    std::string dynamic_flags = target_artifact == DYNAMIC_LIBRARY ? "/DLL /MANIFEST:EMBED /INCREMENTAL:NO "
-                                : target_artifact == EXECUTABLE    ? "/MANIFEST:EMBED /INCREMENTAL:NO "
-                                                                   : "";
-    std::string output_flags =
-      target_artifact == DYNAMIC_LIBRARY
-        ? (target_configuration == RELEASE
-             ? std::format("/IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string())
-             : std::format("/PDB:{}.pdb /IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string(),
-                           (utility::state.build_directory / target_name).string()))
-      : target_artifact == EXECUTABLE
-        ? (target_configuration == RELEASE
-             ? ""
-             : std::format("/PDB:{}.pdb ", (utility::state.build_directory / target_name).string()))
-        : "";
-    std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
-                            : target_artifact == DYNAMIC_LIBRARY ? "dll"
-                                                                 : "exe";
-    std::string link_library_directories = {};
-    for (const auto &directory : library_directories)
-      link_library_directories += std::format("/LIBPATH:\"{}\" ", directory.string());
-    std::string link_libraries = {};
-    for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
-    std::string link_objects = {};
-    for (const auto &source_file : source_files)
-      link_objects += std::format("{}.obj ", (utility::state.build_directory / source_file.stem()).string());
+    if (current_platform == WINDOWS)
+    {
+      std::string executable_option = target_artifact == STATIC_LIBRARY ? "lib" : "link";
+      std::string console_option = target_subsystem == CONSOLE ? "CONSOLE" : "WINDOWS";
+      std::string link_debug_flags = target_configuration == RELEASE     ? ""
+                                     : target_artifact == STATIC_LIBRARY ? ""
+                                                                         : "/DEBUG:FULL ";
+      std::string dynamic_flags = target_artifact == DYNAMIC_LIBRARY ? "/DLL /MANIFEST:EMBED /INCREMENTAL:NO "
+                                  : target_artifact == EXECUTABLE    ? "/MANIFEST:EMBED /INCREMENTAL:NO "
+                                                                     : "";
+      std::string output_flags =
+        target_artifact == DYNAMIC_LIBRARY
+          ? (target_configuration == RELEASE
+               ? std::format("/IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string())
+               : std::format("/PDB:{}.pdb /IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string(),
+                             (utility::state.build_directory / target_name).string()))
+        : target_artifact == EXECUTABLE
+          ? (target_configuration == RELEASE
+               ? ""
+               : std::format("/PDB:{}.pdb ", (utility::state.build_directory / target_name).string()))
+          : "";
+      std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
+                              : target_artifact == DYNAMIC_LIBRARY ? "dll"
+                                                                   : "exe";
+      std::string link_library_directories = {};
+      for (const auto &directory : library_directories)
+        link_library_directories += std::format("/LIBPATH:\"{}\" ", directory.string());
+      std::string link_libraries = {};
+      for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
+      std::string link_objects = {};
+      for (const auto &source_file : source_files)
+        link_objects += std::format("{}.obj ", (utility::state.build_directory / source_file.stem()).string());
 
-    std::vector<std::filesystem::path> target_files = {};
-    target_files.reserve(source_files.size() + include_files.size());
-    target_files.insert(target_files.end(), source_files.begin(), source_files.end());
-    target_files.insert(target_files.end(), include_files.begin(), include_files.end());
-    std::vector<std::filesystem::path> check_files = {utility::state.build_directory / (target_name + "." + extension)};
-    if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / (target_name + ".pdb"));
+      std::vector<std::filesystem::path> target_files = {};
+      target_files.reserve(source_files.size() + include_files.size());
+      target_files.insert(target_files.end(), source_files.begin(), source_files.end());
+      target_files.insert(target_files.end(), include_files.begin(), include_files.end());
+      std::vector<std::filesystem::path> check_files = {utility::state.build_directory /
+                                                        (target_name + "." + extension)};
+      if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / (target_name + ".pdb"));
 
-    task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
-                         utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
-                         link_library_directories, link_libraries, link_objects, output_flags,
-                         (utility::state.build_directory / (target_name + "." + extension)).string()),
-             target_files, check_files);
+      task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
+                           utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
+                           link_library_directories, link_libraries, link_objects, output_flags,
+                           (utility::state.build_directory / (target_name + "." + extension)).string()),
+               target_files, check_files);
+    }
   }
 }
 
@@ -1047,14 +1142,22 @@ namespace csb
 #define CSB_MAIN()                                                                                                     \
   int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
-    const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";         \
-    const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);                 \
-    const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);       \
-    const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);        \
-    csb::utility::state.architecture = csb::utility::get_environment_variable("VSCMD_ARG_HOST_ARCH", error_message);   \
-    std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}", vs_path,             \
-                             toolset_version, sdk_version, csb::utility::state.architecture)                           \
-              << std::endl;                                                                                            \
+    csb::utility::state.architecture = ARCHITECTURE;                                                                   \
+    if (current_platform == WINDOWS)                                                                                   \
+    {                                                                                                                  \
+      const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";       \
+      const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);               \
+      const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);     \
+      const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);      \
+      std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}", vs_path,           \
+                               toolset_version, sdk_version, csb::utility::state.architecture)                         \
+                << std::endl;                                                                                          \
+    }                                                                                                                  \
+    else if (current_platform == LINUX)                                                                                \
+      std::cout << std::format("Architecture: {}", csb::utility::state.architecture) << std::endl;                     \
+    else                                                                                                               \
+      throw std::runtime_error("Unsupported platform.");                                                               \
+                                                                                                                       \
     try                                                                                                                \
     {                                                                                                                  \
       csb::utility::handle_arguments(argc, argv);                                                                      \
