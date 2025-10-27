@@ -256,7 +256,7 @@ namespace csb::utility
                       std::function<void(const std::string &, const std::string &)> on_success = nullptr,
                       std::function<void(const std::string &, const int, const std::string &)> on_failure = nullptr)
   {
-    FILE *pipe = pipe_open((command).c_str(), "r");
+    FILE *pipe = pipe_open((command + " 2>&1").c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
     char buffer[512];
     std::string result = {};
