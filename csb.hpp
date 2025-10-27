@@ -1,4 +1,4 @@
-// Version 1.1.3
+// Version 1.1.4
 
 #pragma once
 
@@ -597,6 +597,28 @@ namespace csb
   inline std::vector<std::string> libraries = {};
   inline std::vector<std::string> definitions = {};
 
+  inline void set_environment_variable(const std::string &name, const std::string &value) { set_env(name, value); }
+
+  inline void append_environment_variable(const std::string &name, const std::string &value)
+  {
+    std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
+    if (!current_value.empty())
+      current_value += (current_platform == WINDOWS ? ";" : ":") + value;
+    else
+      current_value = value;
+    set_env(name, current_value);
+  }
+
+  inline void prepend_environment_variable(const std::string &name, const std::string &value)
+  {
+    std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
+    if (!current_value.empty())
+      current_value = value + (current_platform == WINDOWS ? ";" : ":") + current_value;
+    else
+      current_value = value;
+    set_env(name, current_value);
+  }
+
   inline std::vector<std::filesystem::path> files_from(const std::set<std::filesystem::path> &directories,
                                                        const std::set<std::string> &extensions,
                                                        const std::set<std::filesystem::path> &overrides = {},
@@ -620,9 +642,7 @@ namespace csb
             files.insert(entry.path().string());
       }
     }
-    for (const auto &override_file : overrides)
-      if (std::filesystem::exists(override_file) && std::filesystem::is_regular_file(override_file))
-        files.insert(override_file);
+    for (const auto &override_file : overrides) files.insert(override_file);
     std::vector<std::filesystem::path> result(files.begin(), files.end());
     return result;
   }
