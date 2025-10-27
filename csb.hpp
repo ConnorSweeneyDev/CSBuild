@@ -957,7 +957,7 @@ namespace csb
         std::format("    \"file\": \"{}\",\n", escape_backslashes(std::filesystem::absolute(*iterator).string()));
       content += std::format("    \"command\": \"clang++ -std=c++{} -Wall -Wextra -Wpedantic -Wconversion -Wshadow-all "
                              "-Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal "
-                             "-Wunreachable-code-aggressive -Wformat=2 -DWIN32 -D_WINDOWS ",
+                             "-Wunreachable-code-aggressive -Wformat=2 ",
                              std::to_string(cxx_standard));
       for (const auto &definition : definitions) content += std::format("-D{} ", definition);
       std::vector<std::filesystem::path> include_directories = {};
@@ -1022,12 +1022,13 @@ namespace csb
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
 
+    utility::state.build_directory =
+      std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
+    if (!std::filesystem::exists(utility::state.build_directory))
+      std::filesystem::create_directories(utility::state.build_directory);
+
     if (current_platform == WINDOWS)
     {
-      utility::state.build_directory =
-        std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
-      if (!std::filesystem::exists(utility::state.build_directory))
-        std::filesystem::create_directories(utility::state.build_directory);
       std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
       std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
                                                              : (target_configuration == RELEASE ? "MD" : "MDd");
@@ -1093,6 +1094,81 @@ namespace csb
           return false;
         });
     }
+    else if (current_platform == LINUX)
+    {
+      std::string compile_debug_flags = target_configuration == RELEASE ? "-O2 " : "-O0 -g ";
+      std::string compile_pic_flag = target_artifact == DYNAMIC_LIBRARY ? "-fPIC " : "";
+      std::string compile_definitions = {};
+      for (const auto &definition : definitions) compile_definitions += std::format("-D{} ", definition);
+      std::vector<std::filesystem::path> include_directories = {};
+      for (const auto &include_file : include_files)
+      {
+        if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
+                                                        include_file.parent_path()) == include_directories.end())
+          include_directories.push_back(include_file.parent_path());
+      }
+      std::string compile_include_directories = {};
+      for (const auto &directory : include_directories)
+        compile_include_directories += std::format("-I\"{}\" ", directory.string());
+      std::string compile_external_include_directories = {};
+      for (const auto &directory : external_include_directories)
+        compile_external_include_directories += std::format("-isystem\"{}\" ", directory.string());
+      std::vector<std::filesystem::path> check_files = {utility::state.build_directory / "[.filename.stem].o",
+                                                        utility::state.build_directory / "[.filename.stem].d"};
+      std::string warning_flags = {};
+      if (warning_level >= W1) warning_flags += "-Wall ";
+      if (warning_level >= W2) warning_flags += "-Wextra ";
+      if (warning_level >= W3) warning_flags += "-Wpedantic ";
+      if (warning_level >= W4)
+        warning_flags +=
+          "-Wconversion -Wshadow -Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal -Wformat=2 ";
+
+      multi_task_run(std::format("g++ -std=c++{} {}{}{}-MMD -MP {}{}{}-c \"[]\" -o {}/[.stem].o",
+                                 std::to_string(cxx_standard), warning_flags, compile_debug_flags, compile_pic_flag,
+                                 compile_definitions, compile_include_directories, compile_external_include_directories,
+                                 utility::state.build_directory.string()),
+                     source_files, check_files,
+                     [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
+                     {
+                       auto object_time = std::filesystem::last_write_time(checked_files[0]);
+                       std::filesystem::path dependency_path = checked_files[1];
+
+                       std::ifstream dependency_file(dependency_path);
+                       if (!dependency_file.is_open()) return true;
+                       std::string line;
+                       std::string full_content;
+                       while (std::getline(dependency_file, line))
+                       {
+                         if (line.empty()) continue;
+                         if (line.back() == '\\') line.pop_back();
+                         full_content += line + " ";
+                       }
+                       dependency_file.close();
+
+                       size_t colon_pos = full_content.find(':');
+                       if (colon_pos == std::string::npos) return true;
+                       std::string dependencies = full_content.substr(colon_pos + 1);
+
+                       size_t pos = 0;
+                       while (pos < dependencies.length())
+                       {
+                         while (pos < dependencies.length() && std::isspace(dependencies[pos])) pos++;
+                         if (pos >= dependencies.length()) break;
+
+                         size_t end = pos;
+                         while (end < dependencies.length() && !std::isspace(dependencies[end])) end++;
+
+                         std::filesystem::path include_path = dependencies.substr(pos, end - pos);
+                         if (std::filesystem::exists(include_path))
+                         {
+                           auto include_time = std::filesystem::last_write_time(include_path);
+                           if (include_time > object_time) return true;
+                         }
+                         pos = end;
+                       }
+                       return false;
+                     });
+    }
   }
 
   inline void link()
@@ -1146,6 +1222,42 @@ namespace csb
                            link_library_directories, link_libraries, link_objects, output_flags,
                            (utility::state.build_directory / (target_name + "." + extension)).string()),
                target_files, check_files);
+    }
+    else if (current_platform == LINUX)
+    {
+      std::string extension = target_artifact == STATIC_LIBRARY ? "a" : target_artifact == DYNAMIC_LIBRARY ? "so" : "";
+      std::string output_name = (target_artifact == STATIC_LIBRARY || target_artifact == DYNAMIC_LIBRARY)
+                                  ? "lib" + target_name + "." + extension
+                                  : target_name;
+
+      std::string runtime_linkage = target_linkage == STATIC ? "-static-libstdc++ -static-libgcc " : "";
+      std::string link_library_directories = {};
+      for (const auto &directory : library_directories)
+        link_library_directories += std::format("-L\"{}\" ", directory.string());
+      std::string link_libraries = {};
+      for (const auto &library : libraries) link_libraries += std::format("-l{} ", library);
+      std::string link_objects = {};
+      for (const auto &source_file : source_files)
+        link_objects += std::format("{}.o ", (utility::state.build_directory / source_file.stem()).string());
+
+      std::vector<std::filesystem::path> target_files = {};
+      target_files.reserve(source_files.size() + include_files.size());
+      target_files.insert(target_files.end(), source_files.begin(), source_files.end());
+      target_files.insert(target_files.end(), include_files.begin(), include_files.end());
+      std::vector<std::filesystem::path> check_files = {utility::state.build_directory / output_name};
+
+      std::string command;
+      if (target_artifact == STATIC_LIBRARY)
+        command = std::format("ar rcs {} {}", (utility::state.build_directory / output_name).string(), link_objects);
+      else if (target_artifact == DYNAMIC_LIBRARY)
+        command = std::format("g++ -shared {}-o {} {}{}{}", runtime_linkage,
+                              (utility::state.build_directory / output_name).string(), link_objects,
+                              link_library_directories, link_libraries);
+      else
+        command = std::format("g++ {}-o {} {}{}{}", runtime_linkage, (utility::state.build_directory / output_name).string(),
+                              link_objects, link_library_directories, link_libraries);
+
+      task_run(command, target_files, check_files);
     }
   }
 }
