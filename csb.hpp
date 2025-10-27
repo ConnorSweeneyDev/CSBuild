@@ -1008,10 +1008,11 @@ namespace csb
                        { return std::find(exclude_files.begin(), exclude_files.end(), path) != exclude_files.end(); }),
         format_files.end());
     auto clang_path = utility::bootstrap_clang(clang_version);
-    auto clang_format_path = clang_path / "clang-format.exe";
+    auto clang_format_path = clang_path / (current_platform == WINDOWS ? "clang-format.exe" : "clang-format");
 
-    csb::multi_task_run(std::format("{} -i \"[]\"", clang_format_path.string()), format_files,
-                        {format_directory / "[.filename].formatted"});
+    csb::multi_task_run(
+      std::format("{} -i \"[]\"", (current_platform == WINDOWS ? "" : "./") + clang_format_path.string()), format_files,
+      {format_directory / "[.filename].formatted"});
   }
 
   inline void compile()
