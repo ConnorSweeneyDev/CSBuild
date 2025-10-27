@@ -847,7 +847,7 @@ namespace csb
                      [](unsigned char c) { return std::toupper(c); });
       std::string build_command = {};
       if (current_platform == WINDOWS)
-        build_command = std::format("cl /nologo /EHsc /std:c++20 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
+        build_command = std::format("cl /nologo /EHsc /std:c++20 /O2 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
                                     "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe --{}",
                                     upper_architecture, target_configuration == RELEASE ? "release" : "debug");
       else if (current_platform == LINUX)
