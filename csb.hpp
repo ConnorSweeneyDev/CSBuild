@@ -1,4 +1,4 @@
-// Version 1.1.1
+// Version 1.1.2
 
 #pragma once
 
@@ -783,13 +783,14 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void archive_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &archives)
+  inline void archive_install(
+    const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>> &archives)
   {
     if (archives.empty()) throw std::runtime_error("No archives to install.");
     bool all_exist = true;
     for (const auto &archive : archives)
     {
-      auto [url, extract_path] = archive;
+      auto [url, extract_path, target_paths] = archive;
       if (url.empty()) throw std::runtime_error("Archive URL not set.");
       if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
       if (!std::filesystem::exists(extract_path))
@@ -803,7 +804,7 @@ namespace csb
 
     for (const auto &archive : archives)
     {
-      auto [url, extract_path] = archive;
+      auto [url, extract_path, target_paths] = archive;
       if (url.empty()) throw std::runtime_error("Archive URL not set.");
       if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
       if (std::filesystem::exists("build" / extract_path)) continue;
@@ -819,10 +820,35 @@ namespace csb
 
       std::cout << "Extracting archive to '" + extract_path.string() + "'... ";
       std::cout.flush();
-      if (!std::filesystem::exists(extract_path)) std::filesystem::create_directories(extract_path);
-      utility::live_execute(std::format("tar -xf {} -C {}", archive_path.string(), extract_path.string()),
+      std::filesystem::path temp_extract_path = (extract_path.string() + "_temp");
+      if (!std::filesystem::exists(temp_extract_path)) std::filesystem::create_directories(temp_extract_path);
+      utility::live_execute(std::format("tar -xf {} -C {}", archive_path.string(), temp_extract_path.string()),
                             "Failed to extract archive: " + archive_name, false);
       std::filesystem::remove(archive_path);
+
+      if (target_paths.empty())
+        std::filesystem::rename(temp_extract_path, extract_path);
+      else
+      {
+        if (!std::filesystem::exists(extract_path)) std::filesystem::create_directories(extract_path);
+        for (const auto &target_path : target_paths)
+        {
+          auto full_target_path = temp_extract_path / target_path;
+          if (!std::filesystem::exists(full_target_path))
+          {
+            std::filesystem::remove_all(temp_extract_path);
+            throw std::runtime_error("Failed to find target path in archive: " + full_target_path.string());
+          }
+
+          if (std::filesystem::is_directory(full_target_path))
+            for (const auto &entry : std::filesystem::directory_iterator(full_target_path))
+              std::filesystem::rename(entry.path(), extract_path / entry.path().filename());
+          else
+            std::filesystem::rename(full_target_path, extract_path / target_path.filename());
+        }
+        std::filesystem::remove_all(temp_extract_path);
+      }
+
       std::cout << "done." << std::endl;
     }
 
