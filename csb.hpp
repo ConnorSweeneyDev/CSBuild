@@ -530,9 +530,19 @@ namespace csb::utility
     if (std::filesystem::exists(clang_path)) return clang_path;
     std::cout << std::endl << small_section_divider << std::endl;
 
+    auto to_upper = [](std::string string)
+    {
+      std::transform(string.begin(), string.end(), string.begin(), [](unsigned char c) { return std::toupper(c); });
+      return string;
+    };
+
     if (state.architecture != "x64" && state.architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
-    std::string clang_architecture = state.architecture == "x64" ? "x86_64" : "aarch64";
+    std::string clang_architecture = {};
+    if (current_platform == WINDOWS)
+      clang_architecture = state.architecture == "x64" ? "x86_64" : "aarch64";
+    else if (current_platform == LINUX)
+      clang_architecture = to_upper(state.architecture);
     std::filesystem::path archive = std::format(
       "{}-{}-{}.tar.xz", current_platform == WINDOWS ? "clang+llvm" : "LLVM", clang_version,
       current_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture);
