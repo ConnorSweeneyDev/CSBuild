@@ -1,4 +1,4 @@
-// Version 1.1.2
+// Version 1.1.3
 
 #pragma once
 
@@ -597,23 +597,34 @@ namespace csb
   inline std::vector<std::string> libraries = {};
   inline std::vector<std::string> definitions = {};
 
-  inline std::vector<std::filesystem::path> files_from(const std::filesystem::path &directory,
-                                                       const std::set<std::string> &extensions, bool recursive = true)
+  inline std::vector<std::filesystem::path> files_from(const std::set<std::filesystem::path> &directories,
+                                                       const std::set<std::string> &extensions,
+                                                       const std::set<std::filesystem::path> &overrides = {},
+                                                       bool recursive = true)
   {
-    std::vector<std::filesystem::path> files = {};
-    if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
-      throw std::runtime_error("Directory does not exist: " + directory.string());
-    if (recursive)
+    std::set<std::filesystem::path> files = {};
+    for (const auto &directory : directories)
     {
-      for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
-        if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
-          files.push_back(entry.path().string());
-      return files;
+      if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+        throw std::runtime_error("Directory does not exist: " + directory.string());
+      if (recursive)
+      {
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
+          if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
+            files.insert(entry.path().string());
+      }
+      else
+      {
+        for (const auto &entry : std::filesystem::directory_iterator(directory))
+          if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
+            files.insert(entry.path().string());
+      }
     }
-    for (const auto &entry : std::filesystem::directory_iterator(directory))
-      if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
-        files.push_back(entry.path().string());
-    return files;
+    for (const auto &override_file : overrides)
+      if (std::filesystem::exists(override_file) && std::filesystem::is_regular_file(override_file))
+        files.insert(override_file);
+    std::vector<std::filesystem::path> result(files.begin(), files.end());
+    return result;
   }
 
   inline void task_run(const std::string &command)
