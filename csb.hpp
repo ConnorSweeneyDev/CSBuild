@@ -450,7 +450,8 @@ namespace csb::utility
   {
     bool needs_bootstrap = false;
 
-    auto vcpkg_path = std::filesystem::path("build") / std::format("vcpkg-{}", vcpkg_version) / "vcpkg.exe";
+    auto vcpkg_path = std::filesystem::path("build") / std::format("vcpkg-{}", vcpkg_version) /
+                      (current_platform == WINDOWS ? "vcpkg.exe" : "vcpkg");
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
       needs_bootstrap = true;
