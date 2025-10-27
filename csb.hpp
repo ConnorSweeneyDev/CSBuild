@@ -1,4 +1,4 @@
-// Version 1.1.4
+// Version 1.1.5
 
 #pragma once
 
@@ -55,9 +55,10 @@ inline std::string get_env(const std::string &name, const std::string &error_mes
 {
   char *value = nullptr;
   size_t len = 0;
-  if (_dupenv_s(&value, &len, name.c_str()) != 0 || !value)
+  if (_dupenv_s(&value, &len, name.c_str()) != 0)
     throw std::runtime_error(error_message + "\n" + name + " environment variable not found.");
-  std::string result = std::string(value);
+  std::string result = {};
+  if (value) result = std::string(value);
   free(value);
   return result;
 }
@@ -93,7 +94,7 @@ inline int pipe_close(FILE *pipe) { return _pclose(pipe); }
 inline std::string get_env(const std::string &name, const std::string &error_message)
 {
   const char *value = std::getenv(name.c_str());
-  if (!value) throw std::runtime_error(error_message + "\n" + name + " environment variable not found.");
+  if (!value) return "";
   return std::string(value);
 }
 
@@ -186,10 +187,10 @@ namespace csb::utility
     }
   }
 
-  inline std::string get_environment_variable(const std::string &name, const std::string &error_message)
+  inline std::string strict_get_env(const std::string &name, const std::string &error_message)
   {
-    std::string result = get_env(name, error_message);
-    if (result.empty()) throw std::runtime_error(name + " environment variable is empty.");
+    auto result = get_env(name, "Failed to get environment variable: " + name + ".");
+    if (result.empty()) throw std::runtime_error(error_message);
     return result;
   }
 
@@ -596,6 +597,11 @@ namespace csb
   inline std::vector<std::filesystem::path> library_directories = {};
   inline std::vector<std::string> libraries = {};
   inline std::vector<std::string> definitions = {};
+
+  inline std::string get_environment_variable(const std::string &name)
+  {
+    return get_env(name, "Failed to get environment variable: " + name + ".");
+  }
 
   inline void set_environment_variable(const std::string &name, const std::string &value) { set_env(name, value); }
 
@@ -1379,9 +1385,9 @@ namespace csb
     if (csb::current_platform == WINDOWS)                                                                              \
     {                                                                                                                  \
       const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";       \
-      const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);               \
-      const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);     \
-      const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);      \
+      const std::string vs_path = csb::utility::strict_get_env("VSINSTALLDIR", error_message);                         \
+      const std::string toolset_version = csb::utility::strict_get_env("VCToolsVersion", error_message);               \
+      const std::string sdk_version = csb::utility::strict_get_env("WindowsSDKVersion", error_message);                \
       std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}", vs_path,           \
                                toolset_version, sdk_version, csb::current_architecture)                                \
                 << std::endl;                                                                                          \
