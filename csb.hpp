@@ -1,4 +1,4 @@
-// Version 1.0.0
+// Version 1.1.0
 
 #pragma once
 
@@ -49,7 +49,7 @@ enum platform
   #else
     #define ARCHITECTURE "unknown"
   #endif
-inline platform current_platform = WINDOWS;
+  #define PLATFORM WINDOWS
 
 inline std::string get_env(const std::string &name, const std::string &error_message)
 {
@@ -88,7 +88,7 @@ inline int pipe_close(FILE *pipe) { return _pclose(pipe); }
   #else
     #define ARCHITECTURE "unknown"
   #endif
-inline platform current_platform = LINUX;
+  #define PLATFORM LINUX
 
 inline std::string get_env(const std::string &name, const std::string &error_message)
 {
@@ -111,8 +111,15 @@ inline FILE *pipe_open(const std::string &command, const std::string &mode)
 inline int pipe_close(FILE *pipe) { return pclose(pipe); }
 
 #else
-inline platform current_platform = UNDEFINED;
+  #define PLATFORM UNDEFINED
+  #define ARCHITECTURE "unknown"
 #endif
+
+namespace csb
+{
+  inline platform current_platform = PLATFORM;
+  inline std::string current_architecture = ARCHITECTURE;
+}
 
 enum artifact
 {
@@ -156,7 +163,6 @@ namespace csb::utility
 {
   struct internal_state
   {
-    std::string architecture = {};
     std::optional<configuration> forced_configuration = {};
     std::filesystem::path build_directory = {};
   } inline state = {};
@@ -538,13 +544,13 @@ namespace csb::utility
       return string;
     };
 
-    if (state.architecture != "x64" && state.architecture != "arm64")
+    if (current_architecture != "x64" && current_architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
     std::string clang_architecture = {};
     if (current_platform == WINDOWS)
-      clang_architecture = state.architecture == "x64" ? "x86_64" : "aarch64";
+      clang_architecture = current_architecture == "x64" ? "x86_64" : "aarch64";
     else if (current_platform == LINUX)
-      clang_architecture = to_upper(state.architecture);
+      clang_architecture = to_upper(current_architecture);
     std::filesystem::path archive = std::format(
       "{}-{}-{}.tar.xz", current_platform == WINDOWS ? "clang+llvm" : "LLVM", clang_version,
       current_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture);
@@ -777,6 +783,52 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
+  inline void archive_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &archives)
+  {
+    if (archives.empty()) throw std::runtime_error("No archives to install.");
+    bool all_exist = true;
+    for (const auto &archive : archives)
+    {
+      auto [url, extract_path] = archive;
+      if (url.empty()) throw std::runtime_error("Archive URL not set.");
+      if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
+      if (!std::filesystem::exists(extract_path))
+      {
+        all_exist = false;
+        break;
+      }
+    }
+    if (all_exist) return;
+    std::cout << std::endl << utility::small_section_divider;
+
+    for (const auto &archive : archives)
+    {
+      auto [url, extract_path] = archive;
+      if (url.empty()) throw std::runtime_error("Archive URL not set.");
+      if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
+      if (std::filesystem::exists("build" / extract_path)) continue;
+
+      std::string archive_name = url.substr(url.find_last_of('/') + 1);
+      auto archive_path = std::filesystem::path("build") / archive_name;
+      if (!std::filesystem::exists(archive_path))
+      {
+        std::cout << "\nDownloading archive at '" + url + "'..." << std::endl;
+        utility::live_execute(std::format("curl -f -L -C - -o {} {}", archive_path.string(), url),
+                              "Failed to download archive: " + url, false);
+      }
+
+      std::cout << "Extracting archive to '" + extract_path.string() + "'... ";
+      std::cout.flush();
+      if (!std::filesystem::exists(extract_path)) std::filesystem::create_directories(extract_path);
+      utility::live_execute(std::format("tar -xf {} -C {}", archive_path.string(), extract_path.string()),
+                            "Failed to extract archive: " + archive_name, false);
+      std::filesystem::remove(archive_path);
+      std::cout << "done." << std::endl;
+    }
+
+    std::cout << utility::small_section_divider << std::endl;
+  }
+
   inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
   {
     if (subprojects.empty()) throw std::runtime_error("No subprojects to install.");
@@ -844,7 +896,7 @@ namespace csb
       auto build_path = subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug");
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
 
-      std::string upper_architecture = utility::state.architecture;
+      std::string upper_architecture = current_architecture;
       std::transform(upper_architecture.begin(), upper_architecture.end(), upper_architecture.begin(),
                      [](unsigned char c) { return std::toupper(c); });
       std::string build_command = {};
@@ -888,11 +940,10 @@ namespace csb
 
     std::string vcpkg_triplet = {};
     if (current_platform == WINDOWS)
-      vcpkg_triplet =
-        std::format("{}-windows{}{}", utility::state.architecture, (target_linkage == STATIC ? "-static" : ""),
-                    (target_configuration == RELEASE ? "-release" : ""));
+      vcpkg_triplet = std::format("{}-windows{}{}", current_architecture, (target_linkage == STATIC ? "-static" : ""),
+                                  (target_configuration == RELEASE ? "-release" : ""));
     else if (current_platform == LINUX)
-      vcpkg_triplet = std::format("{}-linux", utility::state.architecture);
+      vcpkg_triplet = std::format("{}-linux", current_architecture);
     auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
     std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
     utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
@@ -1220,7 +1271,7 @@ namespace csb
       if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / (target_name + ".pdb"));
 
       task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
-                           utility::state.architecture, dynamic_flags, console_option, link_debug_flags,
+                           current_architecture, dynamic_flags, console_option, link_debug_flags,
                            link_library_directories, link_libraries, link_objects, output_flags,
                            (utility::state.build_directory / (target_name + "." + extension)).string()),
                target_files, check_files);
@@ -1256,8 +1307,9 @@ namespace csb
                               (utility::state.build_directory / output_name).string(), link_objects,
                               link_library_directories, link_libraries);
       else
-        command = std::format("g++ {}-o {} {}{}{}", runtime_linkage, (utility::state.build_directory / output_name).string(),
-                              link_objects, link_library_directories, link_libraries);
+        command =
+          std::format("g++ {}-o {} {}{}{}", runtime_linkage, (utility::state.build_directory / output_name).string(),
+                      link_objects, link_library_directories, link_libraries);
 
       task_run(command, target_files, check_files);
     }
@@ -1269,19 +1321,18 @@ namespace csb
 #define CSB_MAIN()                                                                                                     \
   int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
-    csb::utility::state.architecture = ARCHITECTURE;                                                                   \
-    if (current_platform == WINDOWS)                                                                                   \
+    if (csb::current_platform == WINDOWS)                                                                              \
     {                                                                                                                  \
       const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";       \
       const std::string vs_path = csb::utility::get_environment_variable("VSINSTALLDIR", error_message);               \
       const std::string toolset_version = csb::utility::get_environment_variable("VCToolsVersion", error_message);     \
       const std::string sdk_version = csb::utility::get_environment_variable("WindowsSDKVersion", error_message);      \
       std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}", vs_path,           \
-                               toolset_version, sdk_version, csb::utility::state.architecture)                         \
+                               toolset_version, sdk_version, csb::current_architecture)                                \
                 << std::endl;                                                                                          \
     }                                                                                                                  \
-    else if (current_platform == LINUX)                                                                                \
-      std::cout << std::format("Architecture: {}", csb::utility::state.architecture) << std::endl;                     \
+    else if (csb::current_platform == LINUX)                                                                           \
+      std::cout << std::format("Architecture: {}", csb::current_architecture) << std::endl;                            \
     else                                                                                                               \
       throw std::runtime_error("Unsupported platform.");                                                               \
                                                                                                                        \

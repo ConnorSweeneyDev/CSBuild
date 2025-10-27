@@ -12,10 +12,10 @@ int csb_main()
   csb::definitions = {"STB_IMAGE_IMPLEMENTATION"};
   csb::include_files = csb::files_from("program/include", {".hpp", ".inl"});
   csb::source_files = csb::files_from("program/source", {".cpp"});
-  if (current_platform == WINDOWS)
+  if (csb::current_platform == WINDOWS)
     csb::libraries = {"kernel32", "user32",  "shell32", "gdi32",    "imm32",    "comdlg32", "ole32",   "oleaut32",
                       "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
-  else if (current_platform == LINUX)
+  else if (csb::current_platform == LINUX)
     csb::libraries = {"pthread", "dl", "m", "SDL3"};
 
   csb::vcpkg_install("2025.08.27");
