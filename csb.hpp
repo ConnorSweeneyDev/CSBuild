@@ -1,4 +1,4 @@
-// Version 1.1.0
+// Version 1.1.1
 
 #pragma once
 
@@ -955,10 +955,8 @@ namespace csb
       vcpkg_installed_directory / vcpkg_triplet / "include",
       vcpkg_installed_directory / vcpkg_triplet /
         (target_configuration == RELEASE ? "lib" : std::filesystem::path("debug") / "lib")};
-    if (!std::filesystem::exists(outputs.first) || !std::filesystem::exists(outputs.second))
-      throw std::runtime_error("vcpkg outputs not found.");
-    external_include_directories.push_back(outputs.first);
-    library_directories.push_back(outputs.second);
+    if (std::filesystem::exists(outputs.first)) external_include_directories.push_back(outputs.first);
+    if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
 
     std::cout << utility::small_section_divider << std::endl;
   }
