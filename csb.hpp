@@ -501,7 +501,8 @@ namespace csb::utility
     std::cout << "Bootstrapping vcpkg... ";
     std::cout.flush();
     utility::execute(
-      "cd " + vcpkg_path.parent_path().string() + " && bootstrap-vcpkg.bat -disableMetrics",
+      std::format("cd {} && bootstrap-vcpkg.{} -disableMetrics", vcpkg_path.parent_path().string(),
+                  current_platform == WINDOWS ? "bat" : "sh"),
       [](const std::string &, const std::string &result)
       {
         std::cout << "done." << std::endl;
