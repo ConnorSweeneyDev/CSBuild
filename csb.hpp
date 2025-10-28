@@ -1,4 +1,4 @@
-// Version 1.1.5
+// Version 1.1.6
 
 #pragma once
 
@@ -27,6 +27,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 enum platform
@@ -653,79 +654,115 @@ namespace csb
     return result;
   }
 
-  inline void task_run(const std::string &command)
+  inline void task_run(const std::variant<std::string, std::function<bool()>> &task)
   {
-    std::cout << std::endl << utility::small_section_divider;
-    std::cout.flush();
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
-    utility::execute(
-      command,
-      [&](const std::string &real_command, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cout << "\n" + real_command + "\n" + (result.empty() ? "" : result + "\n");
-      },
-      [&](const std::string &real_command, const int return_code, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cerr << "\n" + real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-      });
+    if (std::holds_alternative<std::string>(task))
+    {
+      auto command = std::get<std::string>(task);
+      utility::execute(
+        command,
+        [&](const std::string &real_command, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
+        },
+        [&](const std::string &real_command, const int return_code, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        });
+    }
+    else if (std::holds_alternative<std::function<bool()>>(task))
+    {
+      auto function = std::get<std::function<bool()>>(task);
+      if (!function()) throw std::runtime_error("Task function reported failure.");
+    }
+    else
+      throw std::runtime_error("Invalid task variant.");
 
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void task_run(const std::string &command, const std::filesystem::path &check_file)
+  inline void task_run(const std::variant<std::string, std::function<bool()>> &task,
+                       const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
-    std::cout << std::endl << utility::small_section_divider;
-    std::cout.flush();
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
-    utility::execute(
-      command,
-      [&](const std::string &, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cout << "\n" + command + "\n" + (result.empty() ? "" : result + "\n");
-        utility::touch(check_file);
-      },
-      [&](const std::string &, const int return_code, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cerr << "\n" + command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-      });
+    if (std::holds_alternative<std::string>(task))
+    {
+      auto command = std::get<std::string>(task);
+      utility::execute(
+        command,
+        [&](const std::string &real_command, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
+          utility::touch(check_file);
+        },
+        [&](const std::string &real_command, const int return_code, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        });
+    }
+    else if (std::holds_alternative<std::function<bool()>>(task))
+    {
+      auto function = std::get<std::function<bool()>>(task);
+      if (!function()) throw std::runtime_error("Task function reported failure.");
+      utility::touch(check_file);
+    }
+    else
+      throw std::runtime_error("Invalid task variant.");
 
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
+  inline void task_run(const std::variant<std::string, std::function<bool()>> &task,
+                       const std::vector<std::filesystem::path> &target_files,
                        const std::vector<std::filesystem::path> &check_files,
                        std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
                          dependency_handler = nullptr)
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
-    std::cout << std::endl << utility::small_section_divider;
-    std::cout.flush();
+    std::cout << std::endl << utility::small_section_divider << std::endl;
 
-    utility::execute(
-      command,
-      [&](const std::string &real_command, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cout << "\n" + real_command + "\n" + (result.empty() ? "" : result + "\n");
-        for (const auto &file : modified_files)
-          for (const auto &dependency : file.second) utility::touch(dependency);
-      },
-      [&](const std::string &real_command, const int return_code, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cerr << "\n" + real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-      });
+    if (std::holds_alternative<std::string>(task))
+    {
+      auto command = std::get<std::string>(task);
+      utility::execute(
+        command,
+        [&](const std::string &real_command, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
+          for (const auto &file : modified_files)
+            for (const auto &dependency : file.second) utility::touch(dependency);
+        },
+        [&](const std::string &real_command, const int return_code, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        });
+    }
+    else if (std::holds_alternative<std::function<bool()>>(task))
+    {
+      auto function = std::get<std::function<bool()>>(task);
+      if (!function()) throw std::runtime_error("Task function reported failure.");
+      for (const auto &file : modified_files)
+        for (const auto &dependency : file.second) utility::touch(dependency);
+    }
+    else
+      throw std::runtime_error("Invalid task variant.");
 
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void multi_task_run(const std::string &command, const std::vector<std::filesystem::path> &check_files)
+  inline void multi_task_run(const std::variant<std::string, std::function<bool(const std::filesystem::path &)>> &task,
+                             const std::vector<std::filesystem::path> &check_files)
   {
     std::vector<std::filesystem::path> target_files = {};
     for (const auto &file : check_files)
@@ -734,28 +771,71 @@ namespace csb
     std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
 
-    utility::multi_execute(
-      command, target_files,
-      [](const std::filesystem::path item, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         std::string result)
+    if (std::holds_alternative<std::string>(task))
+    {
+      auto command = std::get<std::string>(task);
+      utility::multi_execute(
+        command, target_files,
+        [](const std::filesystem::path &item, const std::vector<std::filesystem::path> &,
+           const std::string &item_command, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
+          utility::touch(item);
+        },
+        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
+           const int return_code, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        });
+    }
+    else if (std::holds_alternative<std::function<bool(const std::filesystem::path &)>>(task))
+    {
+      auto function = std::get<std::function<bool(const std::filesystem::path &)>>(task);
+      std::vector<std::exception_ptr> exceptions = {};
+      std::mutex exceptions_mutex = {};
+      std::atomic<bool> should_stop = false;
+      std::for_each(std::execution::par, target_files.begin(), target_files.end(),
+                    [&](const std::filesystem::path &file)
+                    {
+                      try
+                      {
+                        if (!function(file)) should_stop = true;
+                      }
+                      catch (const std::exception &error)
+                      {
+                        should_stop = true;
+                        std::lock_guard<std::mutex> lock(exceptions_mutex);
+                        exceptions.push_back(std::make_exception_ptr(
+                          std::runtime_error(std::format("{}: {}", file.string(), error.what()))));
+                      }
+                    });
+      if (!exceptions.empty())
       {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
-        utility::touch(item);
-      },
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const int return_code, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-      });
+        for (const auto &exception : exceptions) try
+          {
+            if (exception) std::rethrow_exception(exception);
+          }
+          catch (const std::exception &e)
+          {
+            std::cerr << e.what() << std::endl;
+            should_stop = true;
+          }
+        return;
+      }
+      if (should_stop) throw std::runtime_error("Task function errors occurred.");
+      for (const auto &file : target_files) utility::touch(file);
+    }
+    else
+      throw std::runtime_error("Invalid task variant.");
 
     std::cout << utility::small_section_divider << std::endl;
   }
 
   inline void multi_task_run(
-    const std::string &command, const std::vector<std::filesystem::path> &target_files,
-    const std::vector<std::filesystem::path> &check_files,
+    const std::variant<std::string, std::function<bool(const std::filesystem::path &)>> &task,
+    const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
     std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
       nullptr)
   {
@@ -764,21 +844,64 @@ namespace csb
     std::cout << std::endl << utility::small_section_divider;
     std::cout.flush();
 
-    utility::multi_execute(
-      command, modified_files,
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &dependencies,
-         const std::string &item_command, std::string result)
+    if (std::holds_alternative<std::string>(task))
+    {
+      auto command = std::get<std::string>(task);
+      utility::multi_execute(
+        command, modified_files,
+        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &dependencies,
+           const std::string &item_command, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
+          for (const auto &dependency : dependencies) utility::touch(dependency);
+        },
+        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
+           const int return_code, std::string result)
+        {
+          result = utility::remove_trailing_and_leading_newlines(result);
+          std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+        });
+    }
+    else if (std::holds_alternative<std::function<bool(const std::filesystem::path &)>>(task))
+    {
+      auto function = std::get<std::function<bool(const std::filesystem::path &)>>(task);
+      std::vector<std::exception_ptr> exceptions = {};
+      std::mutex exceptions_mutex = {};
+      std::atomic<bool> should_stop = false;
+      std::for_each(std::execution::par, modified_files.begin(), modified_files.end(),
+                    [&](const auto &file)
+                    {
+                      try
+                      {
+                        if (!function(file.first)) should_stop = true;
+                        for (const auto &dependency : file.second) utility::touch(dependency);
+                      }
+                      catch (const std::exception &error)
+                      {
+                        should_stop = true;
+                        std::lock_guard<std::mutex> lock(exceptions_mutex);
+                        exceptions.push_back(std::make_exception_ptr(
+                          std::runtime_error(std::format("{}: {}", file.first.string(), error.what()))));
+                      }
+                    });
+      if (!exceptions.empty())
       {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
-        for (const auto &dependency : dependencies) utility::touch(dependency);
-      },
-      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
-         const int return_code, std::string result)
-      {
-        result = utility::remove_trailing_and_leading_newlines(result);
-        std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
-      });
+        for (const auto &exception : exceptions) try
+          {
+            if (exception) std::rethrow_exception(exception);
+          }
+          catch (const std::exception &e)
+          {
+            std::cerr << e.what() << std::endl;
+            should_stop = true;
+          }
+        return;
+      }
+      if (should_stop) throw std::runtime_error("Task function errors occurred.");
+    }
+    else
+      throw std::runtime_error("Invalid task variant.");
 
     std::cout << utility::small_section_divider << std::endl;
   }
