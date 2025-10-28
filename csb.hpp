@@ -627,7 +627,7 @@ namespace csb
   }
 
   inline std::vector<std::filesystem::path> files_from(const std::set<std::filesystem::path> &directories,
-                                                       const std::set<std::string> &extensions,
+                                                       const std::set<std::string> &extensions = {},
                                                        const std::set<std::filesystem::path> &overrides = {},
                                                        bool recursive = true)
   {
@@ -639,13 +639,15 @@ namespace csb
       if (recursive)
       {
         for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
-          if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
+          if (entry.is_regular_file() &&
+              (extensions.empty() ? true : extensions.contains(entry.path().extension().string())))
             files.insert(entry.path().string());
       }
       else
       {
         for (const auto &entry : std::filesystem::directory_iterator(directory))
-          if (entry.is_regular_file() && extensions.contains(entry.path().extension().string()))
+          if (entry.is_regular_file() &&
+              (extensions.empty() ? true : extensions.contains(entry.path().extension().string())))
             files.insert(entry.path().string());
       }
     }
@@ -654,7 +656,7 @@ namespace csb
     return result;
   }
 
-  inline void task_run(const std::variant<std::string, std::function<bool()>> &task)
+  inline void task_run(const std::variant<std::string, std::function<void()>> &task)
   {
     std::cout << std::endl << utility::small_section_divider << std::endl;
 
@@ -674,18 +676,15 @@ namespace csb
           std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
-    else if (std::holds_alternative<std::function<bool()>>(task))
-    {
-      auto function = std::get<std::function<bool()>>(task);
-      if (!function()) throw std::runtime_error("Task function reported failure.");
-    }
+    else if (std::holds_alternative<std::function<void()>>(task))
+      std::get<std::function<void()>>(task)();
     else
       throw std::runtime_error("Invalid task variant.");
 
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void task_run(const std::variant<std::string, std::function<bool()>> &task,
+  inline void task_run(const std::variant<std::string, std::function<void()>> &task,
                        const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
@@ -708,10 +707,9 @@ namespace csb
           std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
-    else if (std::holds_alternative<std::function<bool()>>(task))
+    else if (std::holds_alternative<std::function<void()>>(task))
     {
-      auto function = std::get<std::function<bool()>>(task);
-      if (!function()) throw std::runtime_error("Task function reported failure.");
+      std::get<std::function<void()>>(task)();
       utility::touch(check_file);
     }
     else
@@ -720,7 +718,7 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void task_run(const std::variant<std::string, std::function<bool()>> &task,
+  inline void task_run(const std::variant<std::string, std::function<void()>> &task,
                        const std::vector<std::filesystem::path> &target_files,
                        const std::vector<std::filesystem::path> &check_files,
                        std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
@@ -748,10 +746,9 @@ namespace csb
           std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
-    else if (std::holds_alternative<std::function<bool()>>(task))
+    else if (std::holds_alternative<std::function<void()>>(task))
     {
-      auto function = std::get<std::function<bool()>>(task);
-      if (!function()) throw std::runtime_error("Task function reported failure.");
+      std::get<std::function<void()>>(task)();
       for (const auto &file : modified_files)
         for (const auto &dependency : file.second) utility::touch(dependency);
     }
@@ -761,7 +758,7 @@ namespace csb
     std::cout << utility::small_section_divider << std::endl;
   }
 
-  inline void multi_task_run(const std::variant<std::string, std::function<bool(const std::filesystem::path &)>> &task,
+  inline void multi_task_run(const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
                              const std::vector<std::filesystem::path> &check_files)
   {
     std::vector<std::filesystem::path> target_files = {};
@@ -790,9 +787,8 @@ namespace csb
           std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
-    else if (std::holds_alternative<std::function<bool(const std::filesystem::path &)>>(task))
+    else if (std::holds_alternative<std::function<void(const std::filesystem::path &)>>(task))
     {
-      auto function = std::get<std::function<bool(const std::filesystem::path &)>>(task);
       std::vector<std::exception_ptr> exceptions = {};
       std::mutex exceptions_mutex = {};
       std::atomic<bool> should_stop = false;
@@ -801,11 +797,10 @@ namespace csb
                     {
                       try
                       {
-                        if (!function(file)) should_stop = true;
+                        std::get<std::function<void(const std::filesystem::path &)>>(task)(file);
                       }
                       catch (const std::exception &error)
                       {
-                        should_stop = true;
                         std::lock_guard<std::mutex> lock(exceptions_mutex);
                         exceptions.push_back(std::make_exception_ptr(
                           std::runtime_error(std::format("{}: {}", file.string(), error.what()))));
@@ -834,7 +829,7 @@ namespace csb
   }
 
   inline void multi_task_run(
-    const std::variant<std::string, std::function<bool(const std::filesystem::path &)>> &task,
+    const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
     const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
     std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
       nullptr)
@@ -863,9 +858,8 @@ namespace csb
           std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
-    else if (std::holds_alternative<std::function<bool(const std::filesystem::path &)>>(task))
+    else if (std::holds_alternative<std::function<void(const std::filesystem::path &)>>(task))
     {
-      auto function = std::get<std::function<bool(const std::filesystem::path &)>>(task);
       std::vector<std::exception_ptr> exceptions = {};
       std::mutex exceptions_mutex = {};
       std::atomic<bool> should_stop = false;
@@ -874,12 +868,11 @@ namespace csb
                     {
                       try
                       {
-                        if (!function(file.first)) should_stop = true;
+                        std::get<std::function<void(const std::filesystem::path &)>>(task)(file.first);
                         for (const auto &dependency : file.second) utility::touch(dependency);
                       }
                       catch (const std::exception &error)
                       {
-                        should_stop = true;
                         std::lock_guard<std::mutex> lock(exceptions_mutex);
                         exceptions.push_back(std::make_exception_ptr(
                           std::runtime_error(std::format("{}: {}", file.first.string(), error.what()))));
