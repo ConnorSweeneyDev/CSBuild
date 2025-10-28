@@ -1,4 +1,4 @@
-// Version 1.1.6
+// Version 1.2.0
 
 #pragma once
 
@@ -14,11 +14,13 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <stdio.h>
 #include <stdlib.h>
@@ -250,6 +252,8 @@ namespace csb::utility
               current_path = current_path.extension();
             else if (method == "parent_path")
               current_path = current_path.parent_path();
+            else
+              throw std::runtime_error("Unknown path placeholder method: " + method + ".");
           }
           method_start = method_end + 1;
         }
@@ -1138,6 +1142,144 @@ namespace csb
     if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
 
     std::cout << utility::small_section_divider << std::endl;
+  }
+
+  inline void
+  embed(std::pair<std::string, std::string> start_content,
+        const std::tuple<std::function<std::string(const std::filesystem::path &, const std::string &, size_t)>,
+                         std::function<std::string(const std::filesystem::path &, const std::string &, size_t)>,
+                         std::function<std::string(const std::vector<unsigned char> &, size_t,
+                                                   std::function<std::string(unsigned char)>)>> &middle_content,
+        const std::pair<
+          std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, size_t>> &)>,
+          std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, size_t>> &)>>
+          &end_content,
+        const std::vector<std::filesystem::path> &resources,
+        const std::pair<std::filesystem::path, std::filesystem::path> &outputs)
+  {
+    if (resources.empty()) throw std::runtime_error("No resources to embed.");
+
+    auto unsigned_char_to_hex = [](unsigned char character) -> std::string
+    {
+      std::stringstream ss;
+      ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
+      return ss.str();
+    };
+
+    auto substitute_file_data =
+      [&](std::string placeholder, const std::vector<unsigned char> &file_data,
+          const std::function<std::string(const std::vector<unsigned char> &, size_t,
+                                          std::function<std::string(unsigned char)>)> &handler) -> std::string
+    {
+      size_t pos = 0;
+      while ((pos = placeholder.find("[[", pos)) != std::string::npos)
+      {
+        placeholder.replace(pos, 2, "\x01");
+        pos += 1;
+      }
+      pos = 0;
+      while ((pos = placeholder.find("]]", pos)) != std::string::npos)
+      {
+        placeholder.replace(pos, 2, "\x02");
+        pos += 1;
+      }
+
+      pos = placeholder.find("[]");
+      if (pos != std::string::npos)
+      {
+        std::string hex_data = {};
+        if (!handler)
+        {
+          for (size_t index = 0; index < file_data.size(); ++index)
+          {
+            hex_data += unsigned_char_to_hex(file_data[index]);
+            if (index < file_data.size() - 1)
+            {
+              hex_data += ",";
+              if ((index + 1) % 16 == 0)
+                hex_data += "\n    ";
+              else
+                hex_data += " ";
+            }
+          }
+        }
+        else
+          hex_data = handler(file_data, file_data.size(),
+                             [&](unsigned char character) -> std::string { return unsigned_char_to_hex(character); });
+        placeholder.replace(pos, 2, hex_data);
+      }
+
+      pos = 0;
+      while ((pos = placeholder.find('\x01', pos)) != std::string::npos)
+      {
+        placeholder.replace(pos, 1, "[");
+        pos += 1;
+      }
+      pos = 0;
+      while ((pos = placeholder.find('\x02', pos)) != std::string::npos)
+      {
+        placeholder.replace(pos, 1, "]");
+        pos += 1;
+      }
+
+      return placeholder;
+    };
+
+    task_run(
+      [&]()
+      {
+        std::cout << "Generating embedded resources into '" + outputs.first.string() + "' and '" +
+                       outputs.second.string() + "'... ";
+        std::cout.flush();
+
+        std::vector<std::tuple<std::filesystem::path, std::string, size_t>> files = {};
+        for (const auto &resource : resources)
+        {
+          if (!std::filesystem::exists(resource) || !std::filesystem::is_regular_file(resource))
+            throw std::runtime_error("Resource file does not exist or is not a regular file: " + resource.string() +
+                                     ".");
+
+          std::vector<unsigned char> file_data = {};
+          std::ifstream resource_file(resource, std::ios::binary | std::ios::ate);
+          if (!resource_file) throw std::runtime_error("Failed to open resource file: " + resource.string() + ".");
+          std::streamsize size = resource_file.tellg();
+          file_data.resize(static_cast<size_t>(size));
+          resource_file.seekg(0, std::ios::beg);
+          if (!resource_file.read(reinterpret_cast<char *>(file_data.data()), size))
+            throw std::runtime_error("Failed to read resource file: " + resource.string() + ".");
+          resource_file.close();
+
+          std::string name = resource.filename().string();
+          std::replace(name.begin(), name.end(), '.', '_');
+          const size_t file_size = file_data.size();
+          auto [middle_content_first, middle_content_second, middle_content_third] = middle_content;
+          if (middle_content_first)
+            start_content.first +=
+              substitute_file_data(middle_content_first(resource, name, file_size), file_data, middle_content_third);
+          if (middle_content_second)
+            start_content.second +=
+              substitute_file_data(middle_content_second(resource, name, file_size), file_data, middle_content_third);
+          files.push_back(std::make_tuple(resource, name, file_size));
+        }
+        if (end_content.first) start_content.first += end_content.first(files);
+        if (end_content.second) start_content.second += end_content.second(files);
+
+        std::ofstream include_output_file(outputs.first);
+        if (!include_output_file.is_open())
+          throw std::runtime_error("Failed to open embed include output file for writing: " + outputs.first.string() +
+                                   ".");
+        include_output_file << start_content.first;
+        include_output_file.close();
+        std::ofstream source_output_file(outputs.second);
+        if (!source_output_file.is_open())
+          throw std::runtime_error("Failed to open embed source output file for writing: " + outputs.second.string() +
+                                   ".");
+        source_output_file << start_content.second;
+        source_output_file.close();
+
+        std::cout << "done." << std::endl;
+      },
+      resources, {outputs.first, outputs.second});
   }
 
   inline void generate_compile_commands()
