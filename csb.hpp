@@ -285,14 +285,23 @@ namespace csb::utility
   }
 
   template <typename container_type>
-  concept iterable = requires(container_type &type) {
+  concept iterable_string = requires(container_type &type) {
+    std::begin(type);
+    std::end(type);
+    requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::string> ||
+               requires(decltype(*std::begin(type)) elem) {
+                 { elem.string() } -> std::convertible_to<std::string>;
+               };
+  };
+  template <typename container_type>
+  concept iterable_path_dependency = requires(container_type &type) {
     std::end(type);
     std::begin(type);
     requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::filesystem::path> ||
                std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>,
                             std::pair<const std::filesystem::path, std::vector<std::filesystem::path>>>;
   };
-  template <iterable container_type>
+  template <iterable_path_dependency container_type>
   void multi_execute(const std::string &command, const container_type &container,
                      std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
                                         const std::string &, const std::string &)>
@@ -628,6 +637,20 @@ namespace csb
     else
       current_value = value;
     set_env(name, current_value);
+  }
+
+  template <utility::iterable_string container_type> std::string unpack(const container_type &container)
+  {
+    std::string result = {};
+    for (const auto &item : container)
+    {
+      if constexpr (std::same_as<std::remove_cvref_t<decltype(item)>, std::string>)
+        result += item + " ";
+      else
+        result += item.string() + " ";
+    }
+    if (!result.empty()) result.pop_back();
+    return result;
   }
 
   inline std::vector<std::filesystem::path> files_from(const std::set<std::filesystem::path> &directories,
