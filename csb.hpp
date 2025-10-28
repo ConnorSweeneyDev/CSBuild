@@ -1,4 +1,4 @@
-// Version 1.2.0
+// Version 1.2.1
 
 #pragma once
 
@@ -1251,6 +1251,7 @@ namespace csb
 
           std::string name = resource.filename().string();
           std::replace(name.begin(), name.end(), '.', '_');
+          std::replace(name.begin(), name.end(), '-', '_');
           const size_t file_size = file_data.size();
           auto [middle_content_first, middle_content_second, middle_content_third] = middle_content;
           if (middle_content_first)
