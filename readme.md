@@ -6,6 +6,7 @@ A zero dependency, cross-platform build system for C++ projects.
 - **Cross-Platform**: Works on both Windows and Linux.
 - **Simple Configuration**: Uses a `csb.cpp` file in the root for configuration.
 - **Automatic Incremental Builds**: Dependencies are tracked, and only affected steps are re-run.
+- **Embed Support**: Easily embed resources into compilation units.
 - **Multi-Project Support**: Easily use other projects that use CSBuild as a build system.
 - **Archive Support**: Easily download and extract archives as part of the build process.
 - **Custom Build Steps**: Define custom build steps for specialized tasks.
@@ -18,4 +19,5 @@ A zero dependency, cross-platform build system for C++ projects.
 - An environment with access to `cl`, `link` and `lib` on Windows or `g++` and `ar` on Linux.
 - An environment with access to `git`.
 
-See the [test](test) directory for an example project that uses all of the most important features.
+See the [test](test) directory for an example project that uses all of the most important features, but to see a real
+example of a project using it, look at [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine).

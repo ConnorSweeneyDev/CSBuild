@@ -19,10 +19,6 @@ int csb_main()
     csb::libraries = {"c", "m", "pthread", "dl", "SDL3"};
 
   csb::vcpkg_install("2025.08.27");
-  csb::subproject_install({{"ConnorSweeneyDev/CSBuildSubproject", "0.0.0", EXECUTABLE}});
-
-  csb::multi_task_run("CSBuildSubproject --[.filename.stem]",
-                      {"build/csbuildsubproject/hello.marker", "build/csbuildsubproject/goodbye.marker"});
 
   csb::generate_compile_commands();
   csb::clang_format("21.1.1");
