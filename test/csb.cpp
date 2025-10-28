@@ -16,7 +16,7 @@ int csb_main()
     csb::libraries = {"kernel32", "user32",  "shell32", "gdi32",    "imm32",    "comdlg32", "ole32",   "oleaut32",
                       "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
   else if (csb::current_platform == LINUX)
-    csb::libraries = {"pthread", "dl", "m", "SDL3"};
+    csb::libraries = {"c", "m", "pthread", "dl", "SDL3"};
 
   csb::vcpkg_install("2025.08.27");
   csb::subproject_install({{"ConnorSweeneyDev/CSBuildSubproject", "0.0.0", EXECUTABLE}});
