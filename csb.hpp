@@ -1,4 +1,4 @@
-// Version 1.2.6
+// Version 1.2.7
 
 #pragma once
 
@@ -224,10 +224,11 @@ namespace csb::utility
 
       std::string placeholder_content = result.substr(pos + 1, end_pos - pos - 1);
       std::vector<std::filesystem::path> target_paths = {};
-      if (placeholder_content.find("ALL") != std::string::npos)
+      if (auto all_pos = placeholder_content.find("ALL"); all_pos != std::string::npos)
       {
-        if (full_list.empty()) throw std::runtime_error("Path placeholder 'ALL' requires multi_task() usage.");
+        if (full_list.empty()) throw std::runtime_error("Path placeholder 'ALL' requires multi_task_run() usage.");
         target_paths = full_list;
+        placeholder_content.erase(all_pos, 3);
       }
       else
         target_paths = paths;
@@ -330,57 +331,85 @@ namespace csb::utility
 
     std::vector<std::exception_ptr> exceptions = {};
     std::mutex exceptions_mutex = {};
-    std::atomic<bool> should_stop = false;
-    std::for_each(std::execution::par, container.begin(), container.end(),
-                  [&](const auto &item)
-                  {
-                    std::filesystem::path item_path = {};
-                    std::vector<std::filesystem::path> item_dependencies = {};
-                    if constexpr (std::same_as<std::remove_cvref_t<decltype(item)>, std::filesystem::path>)
-                      item_path = item;
-                    else
-                    {
-                      item_path = item.first;
-                      item_dependencies = item.second;
-                    }
+    std::for_each(
+      std::execution::par, container.begin(), container.end(),
+      [&](const auto &item)
+      {
+        std::filesystem::path item_path = {};
+        std::vector<std::filesystem::path> item_dependencies = {};
+        if constexpr (std::same_as<std::remove_cvref_t<decltype(item)>, std::filesystem::path>)
+          item_path = item;
+        else
+        {
+          item_path = item.first;
+          item_dependencies = item.second;
+        }
 
-                    std::string item_command = placeholder_path_replace(command, {item_path}, all_items);
-                    FILE *pipe = pipe_open((item_command + " 2>&1").c_str(), "r");
-                    if (!pipe)
-                    {
-                      std::lock_guard<std::mutex> lock(exceptions_mutex);
-                      exceptions.push_back(std::make_exception_ptr(std::runtime_error(
-                        std::format("{}: Failed to execute command: '{}'.", item_path.string(), item_command))));
-                      return;
-                    }
-                    char buffer[512];
-                    std::string result = {};
-                    while (fgets(buffer, sizeof(buffer), pipe)) result += buffer;
-                    int return_code = pipe_close(pipe);
-                    if (return_code != 0)
-                    {
-                      should_stop = true;
-                      if (on_failure) on_failure(item_path, item_dependencies, item_command, return_code, result);
-                    }
-                    else if (on_success)
-                    {
-                      if (on_success) on_success(item_path, item_dependencies, item_command, result);
-                    }
-                  });
+        std::string item_command = {};
+        try
+        {
+          item_command = placeholder_path_replace(command, {item_path}, all_items);
+        }
+        catch (const std::exception &error)
+        {
+          std::lock_guard<std::mutex> lock(exceptions_mutex);
+          exceptions.push_back(
+            std::make_exception_ptr(std::runtime_error(std::format("{}: {}", item_path.string(), error.what()))));
+          return;
+        }
+        FILE *pipe = pipe_open((item_command + " 2>&1").c_str(), "r");
+        if (!pipe)
+        {
+          std::lock_guard<std::mutex> lock(exceptions_mutex);
+          exceptions.push_back(std::make_exception_ptr(
+            std::runtime_error(std::format("{}: Failed to execute command: '{}'.", item_path.string(), item_command))));
+          return;
+        }
+        char buffer[512];
+        std::string result = {};
+        while (fgets(buffer, sizeof(buffer), pipe)) result += buffer;
+        int return_code = pipe_close(pipe);
+        if (return_code != 0)
+        {
+          try
+          {
+            if (on_failure) on_failure(item_path, item_dependencies, item_command, return_code, result);
+          }
+          catch (const std::exception &error)
+          {
+            std::lock_guard<std::mutex> lock(exceptions_mutex);
+            exceptions.push_back(
+              std::make_exception_ptr(std::runtime_error(std::format("{}: {}", item_path.string(), error.what()))));
+          }
+        }
+        else if (on_success)
+        {
+          try
+          {
+            if (on_success) on_success(item_path, item_dependencies, item_command, result);
+          }
+          catch (const std::exception &error)
+          {
+            std::lock_guard<std::mutex> lock(exceptions_mutex);
+            exceptions.push_back(
+              std::make_exception_ptr(std::runtime_error(std::format("{}: {}", item_path.string(), error.what()))));
+          }
+        }
+      });
     if (!exceptions.empty())
     {
+      std::cout << std::endl;
       for (const auto &exception : exceptions) try
         {
           if (exception) std::rethrow_exception(exception);
         }
-        catch (const std::exception &e)
+        catch (const std::exception &error)
         {
-          std::cerr << e.what() << std::endl;
-          should_stop = true;
+          std::cerr << error.what() << std::endl;
         }
+      throw std::runtime_error("Tasks failed.");
       return;
     }
-    if (should_stop) throw std::runtime_error("Errors occurred.");
   }
 
   inline void live_execute(const std::string &command, const std::string &error_message, bool print_command)
@@ -729,7 +758,8 @@ namespace csb
         [&](const std::string &real_command, const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          std::cout << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n\n";
+          throw std::runtime_error("Task failed.");
         });
     }
     else if (std::holds_alternative<std::function<void()>>(task))
@@ -760,7 +790,8 @@ namespace csb
         [&](const std::string &real_command, const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          std::cout << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n\n";
+          throw std::runtime_error("Task failed.");
         });
     }
     else if (std::holds_alternative<std::function<void()>>(task))
@@ -799,7 +830,8 @@ namespace csb
         [&](const std::string &real_command, const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          std::cout << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n\n";
+          throw std::runtime_error("Task failed.");
         });
     }
     else if (std::holds_alternative<std::function<void()>>(task))
@@ -840,7 +872,8 @@ namespace csb
            const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          std::cout << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          throw std::runtime_error("Task failed.");
         });
     }
     else if (std::holds_alternative<std::function<void(const std::filesystem::path &)>>(task))
@@ -911,7 +944,8 @@ namespace csb
            const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          std::cout << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          throw std::runtime_error("Task failed.");
         });
     }
     else if (std::holds_alternative<std::function<void(const std::filesystem::path &)>>(task))
