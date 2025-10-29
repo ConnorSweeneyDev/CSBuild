@@ -1,4 +1,4 @@
-// Version 1.2.2
+// Version 1.2.3
 
 #pragma once
 
@@ -1168,9 +1168,10 @@ namespace csb
   }
 
   inline void
-  embed(std::pair<std::string, std::string> start_content,
+  embed(const std::pair<std::string, std::string> &start_content,
         const std::tuple<std::function<std::string(const std::filesystem::path &, const std::string &, size_t)>,
                          std::function<std::string(const std::filesystem::path &, const std::string &, size_t)>,
+                         std::function<std::vector<unsigned char>(const std::filesystem::path &)>,
                          std::function<std::string(const std::vector<unsigned char> &, size_t,
                                                    std::function<std::string(unsigned char)>)>> &middle_content,
         const std::pair<
@@ -1181,19 +1182,25 @@ namespace csb
         const std::pair<std::filesystem::path, std::filesystem::path> &outputs)
   {
     if (resources.empty()) throw std::runtime_error("No resources to embed.");
+    if (outputs.first.empty() || outputs.second.empty()) throw std::runtime_error("Embed output files not set.");
 
-    auto unsigned_char_to_hex = [](unsigned char character) -> std::string
-    {
-      std::stringstream ss;
-      ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
-      return ss.str();
-    };
+    auto [header_start_content, source_start_content] = start_content;
+    auto [header_function, source_function, data_retrieval_function, data_format_function] = middle_content;
+    auto [header_end_function, source_end_function] = end_content;
+    auto [output_header, output_source] = outputs;
 
     auto substitute_file_data =
       [&](std::string placeholder, const std::vector<unsigned char> &file_data,
           const std::function<std::string(const std::vector<unsigned char> &, size_t,
                                           std::function<std::string(unsigned char)>)> &handler) -> std::string
     {
+      auto unsigned_char_to_hex = [](unsigned char character) -> std::string
+      {
+        std::stringstream ss;
+        ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
+        return ss.str();
+      };
+
       size_t pos = 0;
       while ((pos = placeholder.find("[[", pos)) != std::string::npos)
       {
@@ -1211,7 +1218,10 @@ namespace csb
       if (pos != std::string::npos)
       {
         std::string hex_data = {};
-        if (!handler)
+        if (handler)
+          hex_data = handler(file_data, file_data.size(),
+                             [&](unsigned char character) -> std::string { return unsigned_char_to_hex(character); });
+        else
         {
           for (size_t index = 0; index < file_data.size(); ++index)
           {
@@ -1226,9 +1236,6 @@ namespace csb
             }
           }
         }
-        else
-          hex_data = handler(file_data, file_data.size(),
-                             [&](unsigned char character) -> std::string { return unsigned_char_to_hex(character); });
         placeholder.replace(pos, 2, hex_data);
       }
 
@@ -1255,6 +1262,9 @@ namespace csb
                        outputs.second.string() + "'... ";
         std::cout.flush();
 
+        auto header_content = header_start_content;
+        auto source_content = source_start_content;
+
         std::vector<std::tuple<std::filesystem::path, std::string, size_t>> files = {};
         for (const auto &resource : resources)
         {
@@ -1263,47 +1273,51 @@ namespace csb
                                      ".");
 
           std::vector<unsigned char> file_data = {};
-          std::ifstream resource_file(resource, std::ios::binary | std::ios::ate);
-          if (!resource_file) throw std::runtime_error("Failed to open resource file: " + resource.string() + ".");
-          std::streamsize size = resource_file.tellg();
-          file_data.resize(static_cast<size_t>(size));
-          resource_file.seekg(0, std::ios::beg);
-          if (!resource_file.read(reinterpret_cast<char *>(file_data.data()), size))
-            throw std::runtime_error("Failed to read resource file: " + resource.string() + ".");
-          resource_file.close();
+          if (data_retrieval_function)
+            file_data = data_retrieval_function(resource);
+          else
+          {
+            std::ifstream resource_file(resource, std::ios::binary | std::ios::ate);
+            if (!resource_file) throw std::runtime_error("Failed to open resource file: " + resource.string() + ".");
+            std::streamsize size = resource_file.tellg();
+            file_data.resize(static_cast<size_t>(size));
+            resource_file.seekg(0, std::ios::beg);
+            if (!resource_file.read(reinterpret_cast<char *>(file_data.data()), size))
+              throw std::runtime_error("Failed to read resource file: " + resource.string() + ".");
+            resource_file.close();
+          }
 
           std::string name = resource.filename().string();
           std::replace(name.begin(), name.end(), '.', '_');
           std::replace(name.begin(), name.end(), '-', '_');
           const size_t file_size = file_data.size();
-          auto [middle_content_first, middle_content_second, middle_content_third] = middle_content;
-          if (middle_content_first)
-            start_content.first +=
-              substitute_file_data(middle_content_first(resource, name, file_size), file_data, middle_content_third);
-          if (middle_content_second)
-            start_content.second +=
-              substitute_file_data(middle_content_second(resource, name, file_size), file_data, middle_content_third);
+          if (header_function)
+            header_content +=
+              substitute_file_data(header_function(resource, name, file_size), file_data, data_format_function);
+          if (source_function)
+            source_content +=
+              substitute_file_data(source_function(resource, name, file_size), file_data, data_format_function);
           files.push_back(std::make_tuple(resource, name, file_size));
         }
-        if (end_content.first) start_content.first += end_content.first(files);
-        if (end_content.second) start_content.second += end_content.second(files);
+        if (header_end_function) header_content += header_end_function(files);
+        if (source_end_function) source_content += source_end_function(files);
 
-        std::ofstream include_output_file(outputs.first);
-        if (!include_output_file.is_open())
-          throw std::runtime_error("Failed to open embed include output file for writing: " + outputs.first.string() +
-                                   ".");
-        include_output_file << start_content.first;
-        include_output_file.close();
-        std::ofstream source_output_file(outputs.second);
-        if (!source_output_file.is_open())
-          throw std::runtime_error("Failed to open embed source output file for writing: " + outputs.second.string() +
-                                   ".");
-        source_output_file << start_content.second;
-        source_output_file.close();
+        std::ofstream output_header_file(output_header);
+        if (!output_header_file.is_open())
+          throw std::runtime_error(
+            std::format("Failed to open embed header output file for writing: {}.", outputs.first.string()));
+        output_header_file << header_content;
+        output_header_file.close();
+        std::ofstream output_source_file(output_source);
+        if (!output_source_file.is_open())
+          throw std::runtime_error(
+            std::format("Failed to open embed source output file for writing: {}.", outputs.second.string()));
+        output_source_file << source_content;
+        output_source_file.close();
 
         std::cout << "done." << std::endl;
       },
-      resources, {outputs.first, outputs.second});
+      resources, {output_header, output_source});
   }
 
   inline void generate_compile_commands()
