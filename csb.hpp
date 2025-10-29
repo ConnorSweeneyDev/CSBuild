@@ -1,4 +1,4 @@
-// Version 1.2.5
+// Version 1.2.6
 
 #pragma once
 
@@ -197,8 +197,9 @@ namespace csb::utility
     return result;
   }
 
-  inline std::string path_placeholder_replace(const std::vector<std::filesystem::path> &paths,
-                                              const std::string &placeholder)
+  inline std::string placeholder_path_replace(const std::string &placeholder,
+                                              const std::vector<std::filesystem::path> &paths,
+                                              const std::vector<std::filesystem::path> &full_list = {})
   {
     std::string result = placeholder;
     size_t pos = 0;
@@ -222,8 +223,15 @@ namespace csb::utility
       if (end_pos == std::string::npos) break;
 
       std::string placeholder_content = result.substr(pos + 1, end_pos - pos - 1);
-      std::vector<std::filesystem::path> paths_copy = paths;
-      for (auto &path : paths_copy)
+      std::vector<std::filesystem::path> target_paths = {};
+      if (placeholder_content.find("ALL") != std::string::npos)
+      {
+        if (full_list.empty()) throw std::runtime_error("Path placeholder 'ALL' requires multi_task() usage.");
+        target_paths = full_list;
+      }
+      else
+        target_paths = paths;
+      for (auto &path : target_paths)
       {
         if (!placeholder_content.empty())
         {
@@ -252,6 +260,8 @@ namespace csb::utility
                 path = std::filesystem::relative(path);
               else if (method == "canonical")
                 path = std::filesystem::canonical(path);
+              else if (method == "quoted")
+                path = std::format("\"{}\"", path.string());
               else
                 throw std::runtime_error("Unknown path placeholder method: " + method + ".");
             }
@@ -260,7 +270,7 @@ namespace csb::utility
         }
       }
       std::string replacement = {};
-      for (const auto &path : paths_copy) replacement += path.string() + " ";
+      for (const auto &path : target_paths) replacement += path.string() + " ";
       if (!replacement.empty()) replacement.pop_back();
       result.replace(pos, end_pos - pos + 1, replacement);
       pos += replacement.length();
@@ -312,6 +322,12 @@ namespace csb::utility
                                         const std::string &, const int, const std::string &)>
                        on_failure = nullptr)
   {
+    std::vector<std::filesystem::path> all_items = {};
+    if constexpr (std::same_as<std::remove_cvref_t<container_type>, std::vector<std::filesystem::path>>)
+      all_items = std::vector<std::filesystem::path>(container.begin(), container.end());
+    else
+      for (const auto &item : container) all_items.push_back(item.first);
+
     std::vector<std::exception_ptr> exceptions = {};
     std::mutex exceptions_mutex = {};
     std::atomic<bool> should_stop = false;
@@ -328,7 +344,7 @@ namespace csb::utility
                       item_dependencies = item.second;
                     }
 
-                    std::string item_command = path_placeholder_replace({item_path}, command);
+                    std::string item_command = placeholder_path_replace(command, {item_path}, all_items);
                     FILE *pipe = pipe_open((item_command + " 2>&1").c_str(), "r");
                     if (!pipe)
                     {
@@ -396,13 +412,13 @@ namespace csb::utility
       std::vector<std::filesystem::path> target_check_files = {};
       for (const auto &check_file : check_files)
         target_check_files.push_back(
-          std::filesystem::path(path_placeholder_replace({target_file}, check_file.string())));
+          std::filesystem::path(placeholder_path_replace(check_file.string(), {target_file})));
 
       std::vector<std::filesystem::path> valid_files;
       bool any_missing = false;
       for (const auto &check_file : check_files)
       {
-        std::filesystem::path check_path = path_placeholder_replace({target_file}, check_file.string());
+        std::filesystem::path check_path = placeholder_path_replace(check_file.string(), {target_file});
         if (!std::filesystem::exists(check_path))
         {
           any_missing = true;
@@ -734,7 +750,7 @@ namespace csb
     {
       auto command = std::get<std::string>(task);
       utility::execute(
-        utility::path_placeholder_replace({check_file}, command),
+        utility::placeholder_path_replace(command, {check_file}),
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
@@ -772,7 +788,7 @@ namespace csb
     {
       auto command = std::get<std::string>(task);
       utility::execute(
-        utility::path_placeholder_replace(target_files, command),
+        utility::placeholder_path_replace(command, target_files),
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
