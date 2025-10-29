@@ -1,4 +1,4 @@
-// Version 1.2.7
+// Version 1.2.8
 
 #pragma once
 
@@ -119,10 +119,138 @@ inline int pipe_close(FILE *pipe) { return pclose(pipe); }
   #define ARCHITECTURE "unknown"
 #endif
 
+template <typename container_type>
+concept iterable_string = requires(container_type &type) {
+  std::begin(type);
+  std::end(type);
+  requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::string> ||
+             requires(decltype(*std::begin(type)) elem) {
+               { elem.string() } -> std::convertible_to<std::string>;
+             };
+};
+template <typename container_type>
+concept iterable_path_dependency = requires(container_type &type) {
+  std::end(type);
+  std::begin(type);
+  requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::filesystem::path> ||
+             std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>,
+                          std::pair<const std::filesystem::path, std::vector<std::filesystem::path>>>;
+};
+
 namespace csb
 {
   inline platform current_platform = PLATFORM;
   inline std::string current_architecture = ARCHITECTURE;
+  inline std::mutex output_mutex = {};
+
+  inline std::string get_environment_variable(const std::string &name)
+  {
+    return get_env(name, "Failed to get environment variable: " + name + ".");
+  }
+
+  inline void set_environment_variable(const std::string &name, const std::string &value) { set_env(name, value); }
+
+  inline void append_environment_variable(const std::string &name, const std::string &value)
+  {
+    std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
+    if (!current_value.empty())
+      current_value += (current_platform == WINDOWS ? ";" : ":") + value;
+    else
+      current_value = value;
+    set_env(name, current_value);
+  }
+
+  inline void prepend_environment_variable(const std::string &name, const std::string &value)
+  {
+    std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
+    if (!current_value.empty())
+      current_value = value + (current_platform == WINDOWS ? ";" : ":") + current_value;
+    else
+      current_value = value;
+    set_env(name, current_value);
+  }
+
+  inline void print(const std::string &message)
+  {
+    std::lock_guard<std::mutex> lock(output_mutex);
+    std::cout << message;
+    std::cout.flush();
+  }
+
+  template <typename... message_arguments>
+  inline void print_format(std::format_string<message_arguments...> message, message_arguments &&...args)
+  {
+    std::lock_guard<std::mutex> lock(output_mutex);
+    std::cout << std::format(message, std::forward<message_arguments>(args)...);
+    std::cout.flush();
+  }
+
+  inline void touch(const std::filesystem::path &path)
+  {
+    if (!std::filesystem::exists(path.parent_path())) std::filesystem::create_directories(path.parent_path());
+    if (std::filesystem::exists(path))
+      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
+    else
+    {
+      std::ofstream file(path, std::ios::app);
+      if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
+      file.close();
+    }
+  }
+
+  inline std::string remove_trailing_and_leading_newlines(const std::string &input)
+  {
+    size_t start = input.find_first_not_of('\n');
+    size_t end = input.find_last_not_of('\n');
+    if (start == std::string::npos)
+      return "";
+    else
+      return input.substr(start, end - start + 1);
+  }
+
+  template <iterable_string container_type> std::string unpack(const container_type &container)
+  {
+    std::string result = {};
+    for (const auto &item : container)
+    {
+      if constexpr (std::same_as<std::remove_cvref_t<decltype(item)>, std::string>)
+        result += item + " ";
+      else
+        result += item.string() + " ";
+    }
+    if (!result.empty()) result.pop_back();
+    return result;
+  }
+
+  inline std::vector<std::filesystem::path> files_from(const std::set<std::filesystem::path> &directories,
+                                                       const std::set<std::string> &extensions = {},
+                                                       const std::set<std::filesystem::path> &overrides = {},
+                                                       bool recursive = true)
+  {
+    std::set<std::filesystem::path> files = {};
+    for (const auto &directory : directories)
+    {
+      if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+        throw std::runtime_error("Directory does not exist: " + directory.string());
+      if (recursive)
+      {
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
+          if (entry.is_regular_file() &&
+              (extensions.empty() ? true : extensions.contains(entry.path().extension().string())))
+            files.insert(entry.path().string());
+      }
+      else
+      {
+        for (const auto &entry : std::filesystem::directory_iterator(directory))
+          if (entry.is_regular_file() &&
+              (extensions.empty() ? true : extensions.contains(entry.path().extension().string())))
+            files.insert(entry.path().string());
+      }
+    }
+    for (const auto &override_file : overrides) files.insert(override_file);
+    std::vector<std::filesystem::path> result(files.begin(), files.end());
+    return result;
+  }
 }
 
 enum artifact
@@ -297,23 +425,6 @@ namespace csb::utility
     if (on_success) on_success(command, result);
   }
 
-  template <typename container_type>
-  concept iterable_string = requires(container_type &type) {
-    std::begin(type);
-    std::end(type);
-    requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::string> ||
-               requires(decltype(*std::begin(type)) elem) {
-                 { elem.string() } -> std::convertible_to<std::string>;
-               };
-  };
-  template <typename container_type>
-  concept iterable_path_dependency = requires(container_type &type) {
-    std::end(type);
-    std::begin(type);
-    requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::filesystem::path> ||
-               std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>,
-                            std::pair<const std::filesystem::path, std::vector<std::filesystem::path>>>;
-  };
   template <iterable_path_dependency container_type>
   void multi_execute(const std::string &command, const container_type &container,
                      std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
@@ -398,7 +509,7 @@ namespace csb::utility
       });
     if (!exceptions.empty())
     {
-      std::cout << std::endl;
+      csb::print("\n");
       for (const auto &exception : exceptions) try
         {
           if (exception) std::rethrow_exception(exception);
@@ -414,17 +525,13 @@ namespace csb::utility
 
   inline void live_execute(const std::string &command, const std::string &error_message, bool print_command)
   {
-    if (print_command) std::cout << command << std::endl;
+    if (print_command) print(command + "\n");
 
     FILE *pipe = pipe_open((command + " 2>&1").c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
 
     int character;
-    while ((character = fgetc(pipe)) != EOF)
-    {
-      std::cout << static_cast<char>(character);
-      std::cout.flush();
-    }
+    while ((character = fgetc(pipe)) != EOF) print(std::string(1, static_cast<char>(character)));
 
     int return_code = pipe_close(pipe);
     if (return_code != 0) throw std::runtime_error(error_message);
@@ -546,7 +653,7 @@ namespace csb::utility
     if (current_hash != target_hash)
     {
       needs_bootstrap = true;
-      std::cout << "Checking out to vcpkg " + vcpkg_version + "..." << std::endl;
+      print_format("Checking out to vcpkg {}...\n", vcpkg_version);
       live_execute("cd " + vcpkg_path.parent_path().string() +
                      " && git -c advice.detachedHead=false checkout --progress " + vcpkg_version,
                    "Failed to checkout vcpkg version.", false);
@@ -554,22 +661,21 @@ namespace csb::utility
 
     if (!needs_bootstrap)
     {
-      std::cout << "Using vcpkg version: " + vcpkg_version << std::endl;
+      print_format("Using vcpkg version: {}\n", vcpkg_version);
       return vcpkg_path;
     }
-    std::cout << "Bootstrapping vcpkg... ";
-    std::cout.flush();
+    print("Bootstrapping vcpkg... ");
     utility::execute(
       std::format("cd {} && {}bootstrap-vcpkg.{} -disableMetrics", vcpkg_path.parent_path().string(),
                   current_platform == WINDOWS ? "" : "./", current_platform == WINDOWS ? "bat" : "sh"),
       [](const std::string &, const std::string &result)
       {
-        std::cout << "done." << std::endl;
+        print("done.");
         size_t start = result.find("https://");
         if (start != std::string::npos)
         {
           size_t end = result.find("...", start);
-          if (end != std::string::npos) std::cout << result.substr(start, end - start) << std::endl;
+          if (end != std::string::npos) print(result.substr(start, end - start) + "\n");
         }
       },
       [](const std::string &, const int return_code, const std::string &result)
@@ -586,7 +692,7 @@ namespace csb::utility
   {
     auto clang_path = std::filesystem::path("build") / std::format("clang-{}", clang_version);
     if (std::filesystem::exists(clang_path)) return clang_path;
-    std::cout << std::endl << small_section_divider << std::endl;
+    print_format("\n{}\n", small_section_divider);
 
     auto to_upper = [](std::string string)
     {
@@ -606,12 +712,11 @@ namespace csb::utility
       current_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture);
     std::string url = std::format("https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}", clang_version,
                                   archive.string());
-    std::cout << "Downloading archive at '" + url + "'..." << std::endl;
+    print_format("Downloading archive at '{}'...\n", url);
     utility::live_execute(
       std::format("curl -f -L -C - -o {} {}", (std::filesystem::path("build") / "temp.tar.xz").string(), url),
       "Failed to download archive.", false);
-    std::cout << "Extracting archive... ";
-    std::cout.flush();
+    print("Extracting archive... ");
     utility::live_execute(std::format("tar -xf {} -C build", (std::filesystem::path("build") / "temp.tar.xz").string()),
                           "Failed to extract archive.", false);
     std::filesystem::remove(std::filesystem::path("build") / "temp.tar.xz");
@@ -623,7 +728,7 @@ namespace csb::utility
     for (const auto &entry : std::filesystem::directory_iterator(extracted_path / "bin"))
       if (entry.is_regular_file()) std::filesystem::rename(entry.path(), clang_path / entry.path().filename());
     std::filesystem::remove_all(extracted_path);
-    std::cout << "done." << std::endl << small_section_divider << std::endl;
+    print_format("done.\n{}\n", small_section_divider);
 
     if (!std::filesystem::exists(clang_path)) throw std::runtime_error("Failed to find " + clang_path.string() + ".");
     return clang_path;
@@ -647,103 +752,9 @@ namespace csb
   inline std::vector<std::string> libraries = {};
   inline std::vector<std::string> definitions = {};
 
-  inline std::string get_environment_variable(const std::string &name)
-  {
-    return get_env(name, "Failed to get environment variable: " + name + ".");
-  }
-
-  inline void set_environment_variable(const std::string &name, const std::string &value) { set_env(name, value); }
-
-  inline void append_environment_variable(const std::string &name, const std::string &value)
-  {
-    std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
-    if (!current_value.empty())
-      current_value += (current_platform == WINDOWS ? ";" : ":") + value;
-    else
-      current_value = value;
-    set_env(name, current_value);
-  }
-
-  inline void prepend_environment_variable(const std::string &name, const std::string &value)
-  {
-    std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
-    if (!current_value.empty())
-      current_value = value + (current_platform == WINDOWS ? ";" : ":") + current_value;
-    else
-      current_value = value;
-    set_env(name, current_value);
-  }
-
-  inline void touch(const std::filesystem::path &path)
-  {
-    if (!std::filesystem::exists(path.parent_path())) std::filesystem::create_directories(path.parent_path());
-    if (std::filesystem::exists(path))
-      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
-    else
-    {
-      std::ofstream file(path, std::ios::app);
-      if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
-      file.close();
-    }
-  }
-
-  inline std::string remove_trailing_and_leading_newlines(const std::string &input)
-  {
-    size_t start = input.find_first_not_of('\n');
-    size_t end = input.find_last_not_of('\n');
-    if (start == std::string::npos)
-      return "";
-    else
-      return input.substr(start, end - start + 1);
-  }
-
-  template <utility::iterable_string container_type> std::string unpack(const container_type &container)
-  {
-    std::string result = {};
-    for (const auto &item : container)
-    {
-      if constexpr (std::same_as<std::remove_cvref_t<decltype(item)>, std::string>)
-        result += item + " ";
-      else
-        result += item.string() + " ";
-    }
-    if (!result.empty()) result.pop_back();
-    return result;
-  }
-
-  inline std::vector<std::filesystem::path> files_from(const std::set<std::filesystem::path> &directories,
-                                                       const std::set<std::string> &extensions = {},
-                                                       const std::set<std::filesystem::path> &overrides = {},
-                                                       bool recursive = true)
-  {
-    std::set<std::filesystem::path> files = {};
-    for (const auto &directory : directories)
-    {
-      if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
-        throw std::runtime_error("Directory does not exist: " + directory.string());
-      if (recursive)
-      {
-        for (const auto &entry : std::filesystem::recursive_directory_iterator(directory))
-          if (entry.is_regular_file() &&
-              (extensions.empty() ? true : extensions.contains(entry.path().extension().string())))
-            files.insert(entry.path().string());
-      }
-      else
-      {
-        for (const auto &entry : std::filesystem::directory_iterator(directory))
-          if (entry.is_regular_file() &&
-              (extensions.empty() ? true : extensions.contains(entry.path().extension().string())))
-            files.insert(entry.path().string());
-      }
-    }
-    for (const auto &override_file : overrides) files.insert(override_file);
-    std::vector<std::filesystem::path> result(files.begin(), files.end());
-    return result;
-  }
-
   inline void task_run(const std::variant<std::string, std::function<void()>> &task)
   {
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     if (std::holds_alternative<std::string>(task))
     {
@@ -753,12 +764,13 @@ namespace csb
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
+          print_format("{}\n{}", real_command, (result.empty() ? "" : result + "\n"));
         },
         [&](const std::string &real_command, const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n\n";
+          print_format("{} -> {}\n{}", real_command, std::to_string(return_code),
+                       (result.empty() ? "" : result + "\n\n"));
           throw std::runtime_error("Task failed.");
         });
     }
@@ -767,14 +779,14 @@ namespace csb
     else
       throw std::runtime_error("Invalid task variant.");
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void task_run(const std::variant<std::string, std::function<void()>> &task,
                        const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     if (std::holds_alternative<std::string>(task))
     {
@@ -784,13 +796,14 @@ namespace csb
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
+          print_format("{}\n{}", real_command, (result.empty() ? "" : result + "\n"));
           touch(check_file);
         },
         [&](const std::string &real_command, const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n\n";
+          print_format("{} -> {}\n{}", real_command, std::to_string(return_code),
+                       (result.empty() ? "" : result + "\n\n"));
           throw std::runtime_error("Task failed.");
         });
     }
@@ -802,7 +815,7 @@ namespace csb
     else
       throw std::runtime_error("Invalid task variant.");
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void task_run(const std::variant<std::string, std::function<void()>> &task,
@@ -813,7 +826,7 @@ namespace csb
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     if (std::holds_alternative<std::string>(task))
     {
@@ -823,14 +836,15 @@ namespace csb
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
+          print_format("{}\n{}", real_command, (result.empty() ? "" : result + "\n"));
           for (const auto &file : modified_files)
             for (const auto &dependency : file.second) touch(dependency);
         },
         [&](const std::string &real_command, const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n\n";
+          print_format("{} -> {}\n{}", real_command, std::to_string(return_code),
+                       (result.empty() ? "" : result + "\n\n"));
           throw std::runtime_error("Task failed.");
         });
     }
@@ -843,7 +857,7 @@ namespace csb
     else
       throw std::runtime_error("Invalid task variant.");
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void multi_task_run(const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
@@ -853,8 +867,7 @@ namespace csb
     for (const auto &file : check_files)
       if (!std::filesystem::exists(file)) target_files.push_back(file);
     if (target_files.empty()) return;
-    std::cout << std::endl << utility::small_section_divider;
-    std::cout.flush();
+    print("\n" + utility::small_section_divider);
 
     if (std::holds_alternative<std::string>(task))
     {
@@ -865,14 +878,15 @@ namespace csb
            const std::string &item_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
+          print_format("\n{}\n{}", item_command, (result.empty() ? "" : result + "\n"));
           touch(item);
         },
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
            const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          print_format("\n{} -> {}\n{}", item_command, std::to_string(return_code),
+                       (result.empty() ? "" : result + "\n"));
           throw std::runtime_error("Task failed.");
         });
     }
@@ -914,7 +928,7 @@ namespace csb
     else
       throw std::runtime_error("Invalid task variant.");
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void multi_task_run(
@@ -925,8 +939,7 @@ namespace csb
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
-    std::cout << std::endl << utility::small_section_divider;
-    std::cout.flush();
+    print("\n" + utility::small_section_divider);
 
     if (std::holds_alternative<std::string>(task))
     {
@@ -937,14 +950,15 @@ namespace csb
            const std::string &item_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
+          print_format("\n{}\n{}", item_command, (result.empty() ? "" : result + "\n"));
           for (const auto &dependency : dependencies) touch(dependency);
         },
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
            const int return_code, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
-          std::cout << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
+          print_format("\n{} -> {}\n{}", item_command, std::to_string(return_code),
+                       (result.empty() ? "" : result + "\n"));
           throw std::runtime_error("Task failed.");
         });
     }
@@ -986,27 +1000,27 @@ namespace csb
     else
       throw std::runtime_error("Invalid task variant.");
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void live_task_run(const std::string &command)
   {
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     utility::live_execute(command, "Failed to run task: " + command, true);
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void live_task_run(const std::string &command, const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     utility::live_execute(command, "Failed to run task: " + command, true);
     touch(check_file);
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void live_task_run(
@@ -1017,13 +1031,13 @@ namespace csb
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     utility::live_execute(command, "Failed to run task: " + command, true);
     for (const auto &file : modified_files)
       for (const auto &dependency : file.second) touch(dependency);
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void archive_install(
@@ -1043,7 +1057,7 @@ namespace csb
       }
     }
     if (all_exist) return;
-    std::cout << std::endl << utility::small_section_divider;
+    print("\n" + utility::small_section_divider);
 
     for (const auto &archive : archives)
     {
@@ -1056,13 +1070,12 @@ namespace csb
       auto archive_path = std::filesystem::path("build") / archive_name;
       if (!std::filesystem::exists(archive_path))
       {
-        std::cout << "\nDownloading archive at '" + url + "'..." << std::endl;
+        print_format("\nDownloading archive at '{}'...\n", url);
         utility::live_execute(std::format("curl -f -L -C - -o {} {}", archive_path.string(), url),
                               "Failed to download archive: " + url, false);
       }
 
-      std::cout << "Extracting archive to '" + extract_path.string() + "'... ";
-      std::cout.flush();
+      print_format("Extracting archive to '{}'... ", extract_path.string());
       std::filesystem::path temp_extract_path = (extract_path.string() + "_temp");
       if (!std::filesystem::exists(temp_extract_path)) std::filesystem::create_directories(temp_extract_path);
       utility::live_execute(std::format("tar -xf {} -C {}", archive_path.string(), temp_extract_path.string()),
@@ -1092,10 +1105,10 @@ namespace csb
         std::filesystem::remove_all(temp_extract_path);
       }
 
-      std::cout << "done." << std::endl;
+      print("done.\n");
     }
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
@@ -1109,7 +1122,7 @@ namespace csb
 
     for (const auto &subproject : subprojects)
     {
-      std::cout << std::endl << utility::big_section_divider << std::endl;
+      print_format("\n{}\n", utility::big_section_divider);
 
       auto [name, version, artifact_type] = subproject;
       if (name.empty()) throw std::runtime_error("Subproject name not set.");
@@ -1154,14 +1167,14 @@ namespace csb
         });
       if (current_hash != target_hash)
       {
-        std::cout << "Checking out to subproject " + name + " " + version + "..." << std::endl;
+        print_format("Checking out to subproject {} {}...\n", name, version);
         utility::live_execute("cd " + subproject_path.string() +
                                 " && git -c advice.detachedHead=false checkout --progress " + version,
                               "Failed to checkout subproject version: " + version, false);
         ran_git = true;
       }
 
-      std::cout << (ran_git ? "\n" : "") << "Building subproject " + repo_name + " (" + version + ")..." << std::endl;
+      print_format("{}Building subproject {} ({})...\n", (ran_git ? "\n" : ""), repo_name, version);
       auto build_path = subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug");
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
 
@@ -1194,7 +1207,7 @@ namespace csb
         library_directories.push_back(build_path);
       }
 
-      std::cout << utility::big_section_divider << std::endl;
+      print(utility::big_section_divider + "\n");
     }
   }
 
@@ -1203,7 +1216,7 @@ namespace csb
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
-    std::cout << std::endl << utility::small_section_divider << std::endl;
+    print_format("\n{}\n", utility::small_section_divider);
 
     auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
@@ -1214,7 +1227,7 @@ namespace csb
     else if (current_platform == LINUX)
       vcpkg_triplet = std::format("{}-linux", current_architecture);
     auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
-    std::cout << "Using vcpkg triplet: " << vcpkg_triplet << std::endl;
+    print_format("Using vcpkg triplet: {}\n", vcpkg_triplet);
     utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
                                       vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
                                       vcpkg_installed_directory.string()),
@@ -1227,7 +1240,7 @@ namespace csb
     if (std::filesystem::exists(outputs.first)) external_include_directories.push_back(outputs.first);
     if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
 
-    std::cout << utility::small_section_divider << std::endl;
+    print(utility::small_section_divider + "\n");
   }
 
   inline void
@@ -1321,9 +1334,8 @@ namespace csb
     task_run(
       [&]()
       {
-        std::cout << "Generating embedded resources into '" + outputs.first.string() + "' and '" +
-                       outputs.second.string() + "'... ";
-        std::cout.flush();
+        print_format("Generating embedded resources into '{}' and '{}'... ", outputs.first.string(),
+                     outputs.second.string());
 
         auto header_content = header_start_content;
         auto source_content = source_start_content;
@@ -1378,7 +1390,7 @@ namespace csb
         output_source_file << source_content;
         output_source_file.close();
 
-        std::cout << "done." << std::endl;
+        print("done.\n");
       },
       resources, {output_header, output_source});
   }
@@ -1393,11 +1405,7 @@ namespace csb
     if (utility::find_modified_files(target_files, {"compile_commands.json"}).empty()) return;
     if (utility::state.forced_configuration.has_value())
       target_configuration = utility::state.forced_configuration.value();
-    std::cout << std::endl << utility::small_section_divider;
-    std::cout.flush();
-
-    std::cout << std::endl << "Generating compile_commands.json... ";
-    std::cout.flush();
+    print_format("\n{}\nGenerating compile_commands.json... ", utility::small_section_divider);
 
     auto escape_backslashes = [](const std::string &string) -> std::string
     {
@@ -1459,9 +1467,8 @@ namespace csb
       throw std::runtime_error("Failed to open compile_commands.json file for writing.");
     compile_commands_file << content;
     compile_commands_file.close();
-    std::cout << "done." << std::endl;
 
-    std::cout << utility::small_section_divider << std::endl;
+    print_format("done.\n{}\n", utility::small_section_divider);
   }
 
   inline void clang_format(const std::string &clang_version, std::vector<std::filesystem::path> exclude_files = {})
@@ -1747,12 +1754,11 @@ namespace csb
       const std::string vs_path = csb::utility::strict_get_env("VSINSTALLDIR", error_message);                         \
       const std::string toolset_version = csb::utility::strict_get_env("VCToolsVersion", error_message);               \
       const std::string sdk_version = csb::utility::strict_get_env("WindowsSDKVersion", error_message);                \
-      std::cout << std::format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}", vs_path,           \
-                               toolset_version, sdk_version, csb::current_architecture)                                \
-                << std::endl;                                                                                          \
+      csb::print_format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}\n", vs_path,                \
+                        toolset_version, sdk_version, csb::current_architecture);                                      \
     }                                                                                                                  \
     else if (csb::current_platform == LINUX)                                                                           \
-      std::cout << std::format("Architecture: {}", csb::current_architecture) << std::endl;                            \
+      csb::print_format("Architecture: {}\n", csb::current_architecture);                                              \
     else                                                                                                               \
       throw std::runtime_error("Unsupported platform.");                                                               \
                                                                                                                        \
