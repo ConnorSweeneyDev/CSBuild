@@ -1,4 +1,4 @@
-// Version 1.2.4
+// Version 1.2.5
 
 #pragma once
 
@@ -244,6 +244,14 @@ namespace csb::utility
                 path = path.extension();
               else if (method == "parent_path")
                 path = path.parent_path();
+              else if (method == "lexically_normal")
+                path = path.lexically_normal();
+              else if (method == "absolute")
+                path = std::filesystem::absolute(path);
+              else if (method == "relative")
+                path = std::filesystem::relative(path);
+              else if (method == "canonical")
+                path = std::filesystem::canonical(path);
               else
                 throw std::runtime_error("Unknown path placeholder method: " + method + ".");
             }
@@ -320,7 +328,7 @@ namespace csb::utility
                       item_dependencies = item.second;
                     }
 
-                    std::string item_command = path_placeholder_replace(item_path, command);
+                    std::string item_command = path_placeholder_replace({item_path}, command);
                     FILE *pipe = pipe_open((item_command + " 2>&1").c_str(), "r");
                     if (!pipe)
                     {
