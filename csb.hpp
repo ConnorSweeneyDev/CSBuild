@@ -1,4 +1,4 @@
-// Version 1.2.3
+// Version 1.2.4
 
 #pragma once
 
@@ -197,17 +197,8 @@ namespace csb::utility
     return result;
   }
 
-  inline std::string remove_trailing_and_leading_newlines(const std::string &input)
-  {
-    size_t start = input.find_first_not_of('\n');
-    size_t end = input.find_last_not_of('\n');
-    if (start == std::string::npos)
-      return "";
-    else
-      return input.substr(start, end - start + 1);
-  }
-
-  inline std::string path_placeholder_replace(const std::filesystem::path &path, const std::string &placeholder)
+  inline std::string path_placeholder_replace(const std::vector<std::filesystem::path> &paths,
+                                              const std::string &placeholder)
   {
     std::string result = placeholder;
     size_t pos = 0;
@@ -231,35 +222,38 @@ namespace csb::utility
       if (end_pos == std::string::npos) break;
 
       std::string placeholder_content = result.substr(pos + 1, end_pos - pos - 1);
-      std::filesystem::path current_path = path;
-
-      if (!placeholder_content.empty())
+      std::vector<std::filesystem::path> paths_copy = paths;
+      for (auto &path : paths_copy)
       {
-        size_t method_start = 0;
-        size_t method_end = 0;
-        while (method_end != std::string::npos)
+        if (!placeholder_content.empty())
         {
-          method_end = placeholder_content.find(".", method_start);
-          std::string method = placeholder_content.substr(
-            method_start, method_end == std::string::npos ? std::string::npos : method_end - method_start);
-          if (!method.empty())
+          size_t method_start = 0;
+          size_t method_end = 0;
+          while (method_end != std::string::npos)
           {
-            if (method == "filename")
-              current_path = current_path.filename();
-            else if (method == "stem")
-              current_path = current_path.stem();
-            else if (method == "extension")
-              current_path = current_path.extension();
-            else if (method == "parent_path")
-              current_path = current_path.parent_path();
-            else
-              throw std::runtime_error("Unknown path placeholder method: " + method + ".");
+            method_end = placeholder_content.find(".", method_start);
+            std::string method = placeholder_content.substr(
+              method_start, method_end == std::string::npos ? std::string::npos : method_end - method_start);
+            if (!method.empty())
+            {
+              if (method == "filename")
+                path = path.filename();
+              else if (method == "stem")
+                path = path.stem();
+              else if (method == "extension")
+                path = path.extension();
+              else if (method == "parent_path")
+                path = path.parent_path();
+              else
+                throw std::runtime_error("Unknown path placeholder method: " + method + ".");
+            }
+            method_start = method_end + 1;
           }
-          method_start = method_end + 1;
         }
       }
-
-      std::string replacement = current_path.string();
+      std::string replacement = {};
+      for (const auto &path : paths_copy) replacement += path.string() + " ";
+      if (!replacement.empty()) replacement.pop_back();
       result.replace(pos, end_pos - pos + 1, replacement);
       pos += replacement.length();
     }
@@ -383,19 +377,6 @@ namespace csb::utility
     if (return_code != 0) throw std::runtime_error(error_message);
   }
 
-  inline void touch(const std::filesystem::path &path)
-  {
-    if (!std::filesystem::exists(path.parent_path())) std::filesystem::create_directories(path.parent_path());
-    if (std::filesystem::exists(path))
-      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
-    else
-    {
-      std::ofstream file(path, std::ios::app);
-      if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
-      file.close();
-    }
-  }
-
   inline std::unordered_map<std::filesystem::path, std::vector<std::filesystem::path>> find_modified_files(
     const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
@@ -406,13 +387,14 @@ namespace csb::utility
     {
       std::vector<std::filesystem::path> target_check_files = {};
       for (const auto &check_file : check_files)
-        target_check_files.push_back(std::filesystem::path(path_placeholder_replace(target_file, check_file.string())));
+        target_check_files.push_back(
+          std::filesystem::path(path_placeholder_replace({target_file}, check_file.string())));
 
       std::vector<std::filesystem::path> valid_files;
       bool any_missing = false;
       for (const auto &check_file : check_files)
       {
-        std::filesystem::path check_path = path_placeholder_replace(target_file, check_file.string());
+        std::filesystem::path check_path = path_placeholder_replace({target_file}, check_file.string());
         if (!std::filesystem::exists(check_path))
         {
           any_missing = true;
@@ -639,6 +621,29 @@ namespace csb
     set_env(name, current_value);
   }
 
+  inline void touch(const std::filesystem::path &path)
+  {
+    if (!std::filesystem::exists(path.parent_path())) std::filesystem::create_directories(path.parent_path());
+    if (std::filesystem::exists(path))
+      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
+    else
+    {
+      std::ofstream file(path, std::ios::app);
+      if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
+      file.close();
+    }
+  }
+
+  inline std::string remove_trailing_and_leading_newlines(const std::string &input)
+  {
+    size_t start = input.find_first_not_of('\n');
+    size_t end = input.find_last_not_of('\n');
+    if (start == std::string::npos)
+      return "";
+    else
+      return input.substr(start, end - start + 1);
+  }
+
   template <utility::iterable_string container_type> std::string unpack(const container_type &container)
   {
     std::string result = {};
@@ -694,12 +699,12 @@ namespace csb
         command,
         [&](const std::string &real_command, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
         },
         [&](const std::string &real_command, const int return_code, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
@@ -721,23 +726,23 @@ namespace csb
     {
       auto command = std::get<std::string>(task);
       utility::execute(
-        command,
+        utility::path_placeholder_replace({check_file}, command),
         [&](const std::string &real_command, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
-          utility::touch(check_file);
+          touch(check_file);
         },
         [&](const std::string &real_command, const int return_code, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
     else if (std::holds_alternative<std::function<void()>>(task))
     {
       std::get<std::function<void()>>(task)();
-      utility::touch(check_file);
+      touch(check_file);
     }
     else
       throw std::runtime_error("Invalid task variant.");
@@ -759,17 +764,17 @@ namespace csb
     {
       auto command = std::get<std::string>(task);
       utility::execute(
-        command,
+        utility::path_placeholder_replace(target_files, command),
         [&](const std::string &real_command, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cout << real_command + "\n" + (result.empty() ? "" : result + "\n");
           for (const auto &file : modified_files)
-            for (const auto &dependency : file.second) utility::touch(dependency);
+            for (const auto &dependency : file.second) touch(dependency);
         },
         [&](const std::string &real_command, const int return_code, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cerr << real_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
@@ -777,7 +782,7 @@ namespace csb
     {
       std::get<std::function<void()>>(task)();
       for (const auto &file : modified_files)
-        for (const auto &dependency : file.second) utility::touch(dependency);
+        for (const auto &dependency : file.second) touch(dependency);
     }
     else
       throw std::runtime_error("Invalid task variant.");
@@ -803,14 +808,14 @@ namespace csb
         [](const std::filesystem::path &item, const std::vector<std::filesystem::path> &,
            const std::string &item_command, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
-          utility::touch(item);
+          touch(item);
         },
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
            const int return_code, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
@@ -847,7 +852,7 @@ namespace csb
         return;
       }
       if (should_stop) throw std::runtime_error("Task function errors occurred.");
-      for (const auto &file : target_files) utility::touch(file);
+      for (const auto &file : target_files) touch(file);
     }
     else
       throw std::runtime_error("Invalid task variant.");
@@ -874,14 +879,14 @@ namespace csb
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &dependencies,
            const std::string &item_command, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cout << "\n" + item_command + "\n" + (result.empty() ? "" : result + "\n");
-          for (const auto &dependency : dependencies) utility::touch(dependency);
+          for (const auto &dependency : dependencies) touch(dependency);
         },
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &, const std::string &item_command,
            const int return_code, std::string result)
         {
-          result = utility::remove_trailing_and_leading_newlines(result);
+          result = remove_trailing_and_leading_newlines(result);
           std::cerr << "\n" + item_command + " -> " + std::to_string(return_code) + "\n" + result + "\n";
         });
     }
@@ -896,7 +901,7 @@ namespace csb
                       try
                       {
                         std::get<std::function<void(const std::filesystem::path &)>>(task)(file.first);
-                        for (const auto &dependency : file.second) utility::touch(dependency);
+                        for (const auto &dependency : file.second) touch(dependency);
                       }
                       catch (const std::exception &error)
                       {
@@ -941,7 +946,7 @@ namespace csb
     std::cout << std::endl << utility::small_section_divider << std::endl;
 
     utility::live_execute(command, "Failed to run task: " + command, true);
-    utility::touch(check_file);
+    touch(check_file);
 
     std::cout << utility::small_section_divider << std::endl;
   }
@@ -958,7 +963,7 @@ namespace csb
 
     utility::live_execute(command, "Failed to run task: " + command, true);
     for (const auto &file : modified_files)
-      for (const auto &dependency : file.second) utility::touch(dependency);
+      for (const auto &dependency : file.second) touch(dependency);
 
     std::cout << utility::small_section_divider << std::endl;
   }
