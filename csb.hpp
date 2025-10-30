@@ -1,4 +1,4 @@
-// CSB Version 1.4.1
+// CSB Version 1.4.2
 
 #pragma once
 
@@ -1812,9 +1812,9 @@ namespace csb
   {
     if (target_artifact != EXECUTABLE) throw std::runtime_error("Target artifact is not an executable.");
     std::filesystem::path executable_path = std::format(
-      "{}{}.{}", (current_platform == LINUX ? "./" : ""),
+      "{}{}{}", (current_platform == LINUX ? "./" : ""),
       (std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug") / target_name).string(),
-      (current_platform == WINDOWS ? "exe" : ""));
+      (current_platform == WINDOWS ? ".exe" : ""));
     if (!std::filesystem::exists(executable_path))
       throw std::runtime_error("Executable does not exist: " + executable_path.string() + ".");
 
