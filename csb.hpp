@@ -1,4 +1,4 @@
-// CSB Version 1.3.0
+// CSB Version 1.4.0
 
 #pragma once
 
@@ -139,11 +139,21 @@ concept iterable_path_dependency = requires(container_type &type) {
 template <typename tuple_type>
 concept is_tuple = requires { typename std::tuple_size<tuple_type>::type; };
 
+namespace csb::utility
+{
+  inline std::filesystem::path build_directory = {};
+  inline const std::string big_section_divider = "====================================================================="
+                                                 "===================================================";
+  inline const std::string small_section_divider = "-------------------------------------------------------------------"
+                                                   "-----------------------------------------------------";
+  inline std::mutex output_mutex = {};
+}
+
 namespace csb
 {
+  inline std::vector<std::string> arguments = {};
   inline platform current_platform = PLATFORM;
   inline std::string current_architecture = ARCHITECTURE;
-  inline std::mutex output_mutex = {};
 
   inline std::string get_environment_variable(const std::string &name)
   {
@@ -174,7 +184,7 @@ namespace csb
 
   inline void print(const std::string &message)
   {
-    std::lock_guard<std::mutex> lock(output_mutex);
+    std::lock_guard<std::mutex> lock(utility::output_mutex);
     std::cout << message;
     std::cout.flush();
   }
@@ -280,6 +290,12 @@ enum linkage
   STATIC,
   DYNAMIC
 };
+enum task
+{
+  CLEAN,
+  BUILD,
+  RUN
+};
 enum configuration
 {
   RELEASE,
@@ -293,28 +309,40 @@ enum subsystem
 
 namespace csb::utility
 {
-  struct internal_state
-  {
-    std::optional<configuration> forced_configuration = {};
-    std::filesystem::path build_directory = {};
-  } inline state = {};
-
-  inline const std::string big_section_divider = "====================================================================="
-                                                 "===================================================";
-  inline const std::string small_section_divider = "-------------------------------------------------------------------"
-                                                   "-----------------------------------------------------";
+  inline task current_task = {};
+  inline std::optional<configuration> forced_configuration = {};
 
   inline void handle_arguments(int argc, char *argv[])
   {
-    for (int i = 1; i < argc; ++i)
+    std::vector<std::string> args;
+    for (int index = 1; index < argc; ++index) args.push_back(argv[index]);
+
+    if (args.size() < 1) throw std::runtime_error("Usage: csb [clean|build|run] <release|debug> [other_arguments]");
+    if (args.front() != "clean" && args.front() != "build" && args.front() != "run")
+      throw std::runtime_error("First argument must be one of: clean, build, run.");
+
+    for (const auto &arg : args)
     {
-      std::string argument = argv[i];
-      if (argument == "--release")
-        state.forced_configuration = RELEASE;
-      else if (argument == "--debug")
-        state.forced_configuration = DEBUG;
+      if (arg == "clean")
+        current_task = CLEAN;
+      else if (arg == "build")
+        current_task = BUILD;
+      else if (arg == "run")
+        current_task = RUN;
+      else if (arg == "release")
+      {
+        if (args.front() != "build")
+          throw std::runtime_error("Configuration argument can only be used with the build task.");
+        forced_configuration = RELEASE;
+      }
+      else if (arg == "debug")
+      {
+        if (args.front() != "build")
+          throw std::runtime_error("Configuration argument can only be used with the build task.");
+        forced_configuration = DEBUG;
+      }
       else
-        throw std::runtime_error("Unknown argument: " + argument);
+        csb::arguments.push_back(arg);
     }
   }
 
@@ -1131,8 +1159,7 @@ namespace csb
   inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
   {
     if (subprojects.empty()) throw std::runtime_error("No subprojects to install.");
-    if (utility::state.forced_configuration.has_value())
-      target_configuration = utility::state.forced_configuration.value();
+    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
 
     auto subproject_directory = std::filesystem::path("build") / "subproject";
     if (!std::filesystem::exists(subproject_directory)) std::filesystem::create_directories(subproject_directory);
@@ -1233,8 +1260,7 @@ namespace csb
   inline void vcpkg_install(const std::string &vcpkg_version)
   {
     if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
-    if (utility::state.forced_configuration.has_value())
-      target_configuration = utility::state.forced_configuration.value();
+    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
     print_format("\n{}\n", utility::small_section_divider);
 
     auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
@@ -1429,8 +1455,7 @@ namespace csb
     target_files.insert(target_files.end(), source_files.begin(), source_files.end());
     target_files.insert(target_files.end(), include_files.begin(), include_files.end());
     if (utility::find_modified_files(target_files, {"compile_commands.json"}).empty()) return;
-    if (utility::state.forced_configuration.has_value())
-      target_configuration = utility::state.forced_configuration.value();
+    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
     print_format("\n{}\nGenerating compile_commands.json... ", utility::small_section_divider);
 
     auto escape_backslashes = [](const std::string &string) -> std::string
@@ -1520,17 +1545,42 @@ namespace csb
                    format_files, {format_directory / "[.filename].formatted"});
   }
 
+  inline void clean_build_directory()
+  {
+    if (!std::filesystem::exists("build")) return;
+
+    print_format("\n{}\nCleaning build directory... ", utility::small_section_divider);
+    for (const auto &entry : std::filesystem::directory_iterator("build"))
+    {
+      if (entry.path().filename() == std::format("csb{}", (current_platform == WINDOWS ? ".exe" : ""))) continue;
+      std::filesystem::remove_all(entry.path());
+    }
+    print_format("done.\n{}\n", utility::small_section_divider);
+  }
+
+  inline void remove_files(const std::vector<std::filesystem::path> &files)
+  {
+    if (files.empty()) throw std::runtime_error("No files to remove.");
+
+    print_format("\n{}\nRemoving files:\n", utility::small_section_divider);
+    for (const auto &file : files)
+    {
+      print_format("{}... ", file.string());
+      if (std::filesystem::exists(file)) std::filesystem::remove_all(file);
+      print("done.\n");
+    }
+    print("done.\n" + utility::small_section_divider + "\n");
+  }
+
   inline void compile()
   {
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
-    if (utility::state.forced_configuration.has_value())
-      target_configuration = utility::state.forced_configuration.value();
+    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
 
-    utility::state.build_directory =
-      std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
-    if (!std::filesystem::exists(utility::state.build_directory))
-      std::filesystem::create_directories(utility::state.build_directory);
+    utility::build_directory = std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug");
+    if (!std::filesystem::exists(utility::build_directory))
+      std::filesystem::create_directories(utility::build_directory);
 
     if (current_platform == WINDOWS)
     {
@@ -1550,19 +1600,18 @@ namespace csb
       std::string compile_external_include_directories = {};
       for (const auto &directory : external_include_directories)
         compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
-      std::vector<std::filesystem::path> check_files = {utility::state.build_directory / "[.filename.stem].obj",
-                                                        utility::state.build_directory / "[.filename.stem].d"};
-      if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / "[.filename.stem].pdb");
+      std::vector<std::filesystem::path> check_files = {utility::build_directory / "[.filename.stem].obj",
+                                                        utility::build_directory / "[.filename.stem].d"};
+      if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / "[.filename.stem].pdb");
 
       multi_task_run(
         std::format(
           "cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
           "/Fd{} /sourceDependencies{} {}{}/c \"[]\"",
           std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
-          compile_definitions, utility::state.build_directory.string(), utility::state.build_directory.string(),
-          (utility::state.build_directory / "[.stem].pdb").string(),
-          (utility::state.build_directory / "[.stem].d").string(), compile_include_directories,
-          compile_external_include_directories),
+          compile_definitions, utility::build_directory.string(), utility::build_directory.string(),
+          (utility::build_directory / "[.stem].pdb").string(), (utility::build_directory / "[.stem].d").string(),
+          compile_include_directories, compile_external_include_directories),
         source_files, check_files,
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
         {
@@ -1614,8 +1663,8 @@ namespace csb
       std::string compile_external_include_directories = {};
       for (const auto &directory : external_include_directories)
         compile_external_include_directories += std::format("-isystem\"{}\" ", directory.string());
-      std::vector<std::filesystem::path> check_files = {utility::state.build_directory / "[.filename.stem].o",
-                                                        utility::state.build_directory / "[.filename.stem].d"};
+      std::vector<std::filesystem::path> check_files = {utility::build_directory / "[.filename.stem].o",
+                                                        utility::build_directory / "[.filename.stem].d"};
       std::string warning_flags = {};
       if (warning_level >= W1) warning_flags += "-Wall ";
       if (warning_level >= W2) warning_flags += "-Wextra ";
@@ -1627,7 +1676,7 @@ namespace csb
       multi_task_run(std::format("g++ -std=c++{} {}{}{}-MMD -MP {}{}{}-c \"[]\" -o {}/[.stem].o",
                                  std::to_string(cxx_standard), warning_flags, compile_debug_flags, compile_pic_flag,
                                  compile_definitions, compile_include_directories, compile_external_include_directories,
-                                 utility::state.build_directory.string()),
+                                 utility::build_directory.string()),
                      source_files, check_files,
                      [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
                      {
@@ -1674,8 +1723,7 @@ namespace csb
 
   inline void link()
   {
-    if (!std::filesystem::exists(utility::state.build_directory))
-      throw std::runtime_error("Link called before compile.");
+    if (!std::filesystem::exists(utility::build_directory)) throw std::runtime_error("Link called before compile.");
 
     if (current_platform == WINDOWS)
     {
@@ -1690,13 +1738,13 @@ namespace csb
       std::string output_flags =
         target_artifact == DYNAMIC_LIBRARY
           ? (target_configuration == RELEASE
-               ? std::format("/IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string())
-               : std::format("/PDB:{}.pdb /IMPLIB:{}.lib ", (utility::state.build_directory / target_name).string(),
-                             (utility::state.build_directory / target_name).string()))
+               ? std::format("/IMPLIB:{}.lib ", (utility::build_directory / target_name).string())
+               : std::format("/PDB:{}.pdb /IMPLIB:{}.lib ", (utility::build_directory / target_name).string(),
+                             (utility::build_directory / target_name).string()))
         : target_artifact == EXECUTABLE
           ? (target_configuration == RELEASE
                ? ""
-               : std::format("/PDB:{}.pdb ", (utility::state.build_directory / target_name).string()))
+               : std::format("/PDB:{}.pdb ", (utility::build_directory / target_name).string()))
           : "";
       std::string extension = target_artifact == STATIC_LIBRARY    ? "lib"
                               : target_artifact == DYNAMIC_LIBRARY ? "dll"
@@ -1708,20 +1756,19 @@ namespace csb
       for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
       std::string link_objects = {};
       for (const auto &source_file : source_files)
-        link_objects += std::format("{}.obj ", (utility::state.build_directory / source_file.stem()).string());
+        link_objects += std::format("{}.obj ", (utility::build_directory / source_file.stem()).string());
 
       std::vector<std::filesystem::path> target_files = {};
       target_files.reserve(source_files.size() + include_files.size());
       target_files.insert(target_files.end(), source_files.begin(), source_files.end());
       target_files.insert(target_files.end(), include_files.begin(), include_files.end());
-      std::vector<std::filesystem::path> check_files = {utility::state.build_directory /
-                                                        (target_name + "." + extension)};
-      if (target_configuration == DEBUG) check_files.push_back(utility::state.build_directory / (target_name + ".pdb"));
+      std::vector<std::filesystem::path> check_files = {utility::build_directory / (target_name + "." + extension)};
+      if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / (target_name + ".pdb"));
 
       task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
                            current_architecture, dynamic_flags, console_option, link_debug_flags,
                            link_library_directories, link_libraries, link_objects, output_flags,
-                           (utility::state.build_directory / (target_name + "." + extension)).string()),
+                           (utility::build_directory / (target_name + "." + extension)).string()),
                target_files, check_files);
     }
     else if (current_platform == LINUX)
@@ -1738,28 +1785,52 @@ namespace csb
       for (const auto &library : libraries) link_libraries += std::format("-l{} ", library);
       std::string link_objects = {};
       for (const auto &source_file : source_files)
-        link_objects += std::format("{}.o ", (utility::state.build_directory / source_file.stem()).string());
+        link_objects += std::format("{}.o ", (utility::build_directory / source_file.stem()).string());
 
       std::vector<std::filesystem::path> target_files = {};
       target_files.reserve(source_files.size() + include_files.size());
       target_files.insert(target_files.end(), source_files.begin(), source_files.end());
       target_files.insert(target_files.end(), include_files.begin(), include_files.end());
-      std::vector<std::filesystem::path> check_files = {utility::state.build_directory / output_name};
+      std::vector<std::filesystem::path> check_files = {utility::build_directory / output_name};
 
       std::string command;
       if (target_artifact == STATIC_LIBRARY)
-        command = std::format("ar rcs {} {}", (utility::state.build_directory / output_name).string(), link_objects);
+        command = std::format("ar rcs {} {}", (utility::build_directory / output_name).string(), link_objects);
       else if (target_artifact == DYNAMIC_LIBRARY)
-        command = std::format("g++ -shared {}-o {} {}{}{}", runtime_linkage,
-                              (utility::state.build_directory / output_name).string(), link_objects,
-                              link_library_directories, link_libraries);
-      else
         command =
-          std::format("g++ {}-o {} {}{}{}", runtime_linkage, (utility::state.build_directory / output_name).string(),
+          std::format("g++ -shared {}-o {} {}{}{}", runtime_linkage, (utility::build_directory / output_name).string(),
                       link_objects, link_library_directories, link_libraries);
+      else
+        command = std::format("g++ {}-o {} {}{}{}", runtime_linkage, (utility::build_directory / output_name).string(),
+                              link_objects, link_library_directories, link_libraries);
 
       task_run(command, target_files, check_files);
     }
+  }
+
+  inline void execute_target(const std::variant<std::string, std::vector<std::string>> &target_arguments = {})
+  {
+    if (target_artifact != EXECUTABLE) throw std::runtime_error("Target artifact is not an executable.");
+    std::filesystem::path executable_path = std::format(
+      "{}{}.{}", (current_platform == LINUX ? "./" : ""),
+      (std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug") / target_name).string(),
+      (current_platform == WINDOWS ? "exe" : ""));
+    if (!std::filesystem::exists(executable_path))
+      throw std::runtime_error("Executable does not exist: " + executable_path.string() + ".");
+
+    std::string target_arguments_string = {};
+    if (std::holds_alternative<std::string>(target_arguments))
+      target_arguments_string = std::get<std::string>(target_arguments);
+    else if (std::holds_alternative<std::vector<std::string>>(target_arguments))
+      target_arguments_string = unpack(std::get<std::vector<std::string>>(target_arguments));
+
+    print_format("Running: {}{}\n\n{}\n", executable_path.string(),
+                 target_arguments_string.empty() ? "" : " " + target_arguments_string, utility::small_section_divider);
+    utility::live_execute(std::format("{}{}", executable_path.string(),
+                                      target_arguments_string.empty() ? "" : " " + target_arguments_string),
+                          "Failed to run executable " + executable_path.string() +
+                            (target_arguments_string.empty() ? "." : " With arguments: " + target_arguments_string),
+                          false);
   }
 }
 
@@ -1785,7 +1856,10 @@ namespace csb
     try                                                                                                                \
     {                                                                                                                  \
       csb::utility::handle_arguments(argc, argv);                                                                      \
-      return csb_main();                                                                                               \
+      configure();                                                                                                     \
+      if (csb::utility::current_task == CLEAN) return clean();                                                         \
+      if (csb::utility::current_task == BUILD) return build();                                                         \
+      if (csb::utility::current_task == RUN) return run();                                                             \
     }                                                                                                                  \
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \

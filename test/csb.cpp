@@ -1,6 +1,6 @@
 #include "../csb.hpp" // Would just be "csb.hpp" in a real project
 
-int csb_main()
+void configure()
 {
   csb::target_name = "test";
   csb::target_artifact = EXECUTABLE;
@@ -17,14 +17,27 @@ int csb_main()
                       "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
   else if (csb::current_platform == LINUX)
     csb::libraries = {"c", "m", "pthread", "dl", "SDL3"};
+}
 
+int clean()
+{
+  csb::clean_build_directory();
+  return CSB_SUCCESS;
+}
+
+int build()
+{
   csb::vcpkg_install("2025.08.27");
-
   csb::generate_compile_commands();
   csb::clang_format("21.1.1");
   csb::compile();
   csb::link();
+  return CSB_SUCCESS;
+}
 
+int run()
+{
+  csb::execute_target();
   return CSB_SUCCESS;
 }
 

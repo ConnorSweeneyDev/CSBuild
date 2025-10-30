@@ -1,3 +1,3 @@
 @echo off
 
-if exist "build" rmdir /s /q "build"
+build\csb.exe clean
