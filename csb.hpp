@@ -1,4 +1,4 @@
-// Version 1.2.8
+// Version 1.2.9
 
 #pragma once
 
@@ -180,9 +180,7 @@ namespace csb
   template <typename... message_arguments>
   inline void print_format(std::format_string<message_arguments...> message, message_arguments &&...args)
   {
-    std::lock_guard<std::mutex> lock(output_mutex);
-    std::cout << std::format(message, std::forward<message_arguments>(args)...);
-    std::cout.flush();
+    print(std::format(message, std::forward<message_arguments>(args)...));
   }
 
   inline void touch(const std::filesystem::path &path)
@@ -398,18 +396,17 @@ namespace csb::utility
           }
         }
       }
-      std::string replacement = {};
-      for (const auto &path : target_paths) replacement += path.string() + " ";
-      if (!replacement.empty()) replacement.pop_back();
+      std::string replacement = unpack(target_paths);
       result.replace(pos, end_pos - pos + 1, replacement);
       pos += replacement.length();
     }
     return result;
   }
 
-  inline void execute(const std::string &command,
-                      std::function<void(const std::string &, const std::string &)> on_success = nullptr,
-                      std::function<void(const std::string &, const int, const std::string &)> on_failure = nullptr)
+  inline void
+  execute(const std::string &command,
+          const std::function<void(const std::string &, const std::string &)> &on_success = nullptr,
+          const std::function<void(const std::string &, const int, const std::string &)> &on_failure = nullptr)
   {
     FILE *pipe = pipe_open((command + " 2>&1").c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
@@ -425,14 +422,12 @@ namespace csb::utility
     if (on_success) on_success(command, result);
   }
 
-  template <iterable_path_dependency container_type>
-  void multi_execute(const std::string &command, const container_type &container,
-                     std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                                        const std::string &, const std::string &)>
-                       on_success = nullptr,
-                     std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                                        const std::string &, const int, const std::string &)>
-                       on_failure = nullptr)
+  template <iterable_path_dependency container_type> void
+  multi_execute(const std::string &command, const container_type &container,
+                const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
+                                         const std::string &, const std::string &)> &on_success = nullptr,
+                const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
+                                         const std::string &, const int, const std::string &)> &on_failure = nullptr)
   {
     std::vector<std::filesystem::path> all_items = {};
     if constexpr (std::same_as<std::remove_cvref_t<container_type>, std::vector<std::filesystem::path>>)
@@ -509,7 +504,7 @@ namespace csb::utility
       });
     if (!exceptions.empty())
     {
-      csb::print("\n");
+      print("\n");
       for (const auto &exception : exceptions) try
         {
           if (exception) std::rethrow_exception(exception);
@@ -527,14 +522,11 @@ namespace csb::utility
   {
     if (print_command) print(command + "\n");
 
+    int character = {};
     FILE *pipe = pipe_open((command + " 2>&1").c_str(), "r");
     if (!pipe) throw std::runtime_error("Failed to execute command: '" + command + "'.");
-
-    int character;
     while ((character = fgetc(pipe)) != EOF) print(std::string(1, static_cast<char>(character)));
-
-    int return_code = pipe_close(pipe);
-    if (return_code != 0) throw std::runtime_error(error_message);
+    if (pipe_close(pipe) != 0) throw std::runtime_error(error_message);
   }
 
   inline std::unordered_map<std::filesystem::path, std::vector<std::filesystem::path>> find_modified_files(
@@ -654,8 +646,8 @@ namespace csb::utility
     {
       needs_bootstrap = true;
       print_format("Checking out to vcpkg {}...\n", vcpkg_version);
-      live_execute("cd " + vcpkg_path.parent_path().string() +
-                     " && git -c advice.detachedHead=false checkout --progress " + vcpkg_version,
+      live_execute(std::format("cd {} && git -c advice.detachedHead=false checkout --progress {}",
+                               vcpkg_path.parent_path().string(), vcpkg_version),
                    "Failed to checkout vcpkg version.", false);
     }
 
@@ -670,7 +662,7 @@ namespace csb::utility
                   current_platform == WINDOWS ? "" : "./", current_platform == WINDOWS ? "bat" : "sh"),
       [](const std::string &, const std::string &result)
       {
-        print("done.");
+        print("done.\n");
         size_t start = result.find("https://");
         if (start != std::string::npos)
         {
@@ -818,11 +810,12 @@ namespace csb
     print(utility::small_section_divider + "\n");
   }
 
-  inline void task_run(const std::variant<std::string, std::function<void()>> &task,
-                       const std::vector<std::filesystem::path> &target_files,
-                       const std::vector<std::filesystem::path> &check_files,
-                       std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
-                         dependency_handler = nullptr)
+  inline void
+  task_run(const std::variant<std::string, std::function<void()>> &task,
+           const std::vector<std::filesystem::path> &target_files,
+           const std::vector<std::filesystem::path> &check_files,
+           const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+             &dependency_handler = nullptr)
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
@@ -931,11 +924,12 @@ namespace csb
     print(utility::small_section_divider + "\n");
   }
 
-  inline void multi_task_run(
-    const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
-    const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
-    std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
-      nullptr)
+  inline void
+  multi_task_run(const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
+                 const std::vector<std::filesystem::path> &target_files,
+                 const std::vector<std::filesystem::path> &check_files,
+                 const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+                   &dependency_handler = nullptr)
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
@@ -1023,11 +1017,11 @@ namespace csb
     print(utility::small_section_divider + "\n");
   }
 
-  inline void live_task_run(
-    const std::string &command, const std::vector<std::filesystem::path> &target_files,
-    const std::vector<std::filesystem::path> &check_files,
-    std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)> dependency_handler =
-      nullptr)
+  inline void
+  live_task_run(const std::string &command, const std::vector<std::filesystem::path> &target_files,
+                const std::vector<std::filesystem::path> &check_files,
+                const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+                  &dependency_handler = nullptr)
   {
     auto modified_files = utility::find_modified_files(target_files, check_files, dependency_handler);
     if (modified_files.empty()) return;
@@ -1168,8 +1162,8 @@ namespace csb
       if (current_hash != target_hash)
       {
         print_format("Checking out to subproject {} {}...\n", name, version);
-        utility::live_execute("cd " + subproject_path.string() +
-                                " && git -c advice.detachedHead=false checkout --progress " + version,
+        utility::live_execute(std::format("cd {} && git -c advice.detachedHead=false checkout --progress {}",
+                                          subproject_path.string(), version),
                               "Failed to checkout subproject version: " + version, false);
         ran_git = true;
       }
@@ -1183,11 +1177,13 @@ namespace csb
                      [](unsigned char c) { return std::toupper(c); });
       std::string build_command = {};
       if (current_platform == WINDOWS)
-        build_command = std::format("cl /nologo /EHsc /std:c++20 /O2 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
+        build_command = std::format("cl /nologo /EHsc /std:c++{} /O2 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
                                     "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe --{}",
+                                    (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
                                     upper_architecture, target_configuration == RELEASE ? "release" : "debug");
       else if (current_platform == LINUX)
-        build_command = std::format("g++ -std=c++20 -O2 -o build/csb csb.cpp && build/csb --{}",
+        build_command = std::format("g++ -std=c++{} -O2 -o build/csb csb.cpp && build/csb --{}",
+                                    (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
                                     target_configuration == RELEASE ? "release" : "debug");
       utility::live_execute(std::format("cd {} && {}", subproject_path.string(), build_command),
                             "Failed to install subproject: " + name, false);
@@ -1260,10 +1256,10 @@ namespace csb
     if (resources.empty()) throw std::runtime_error("No resources to embed.");
     if (outputs.first.empty() || outputs.second.empty()) throw std::runtime_error("Embed output files not set.");
 
-    auto [header_start_content, source_start_content] = start_content;
-    auto [header_function, source_function, data_retrieval_function, data_format_function] = middle_content;
-    auto [header_end_function, source_end_function] = end_content;
-    auto [output_header, output_source] = outputs;
+    const auto &[header_start_content, source_start_content] = start_content;
+    const auto &[header_function, source_function, data_retrieval_function, data_format_function] = middle_content;
+    const auto &[header_end_function, source_end_function] = end_content;
+    const auto &[output_header, output_source] = outputs;
 
     auto substitute_file_data =
       [&](std::string placeholder, const std::vector<unsigned char> &file_data,
@@ -1490,9 +1486,8 @@ namespace csb
     auto clang_path = utility::bootstrap_clang(clang_version);
     auto clang_format_path = clang_path / (current_platform == WINDOWS ? "clang-format.exe" : "clang-format");
 
-    csb::multi_task_run(
-      std::format("{} -i \"[]\"", (current_platform == WINDOWS ? "" : "./") + clang_format_path.string()), format_files,
-      {format_directory / "[.filename].formatted"});
+    multi_task_run(std::format("{} -i \"[]\"", (current_platform == WINDOWS ? "" : "./") + clang_format_path.string()),
+                   format_files, {format_directory / "[.filename].formatted"});
   }
 
   inline void compile()
@@ -1516,11 +1511,9 @@ namespace csb
       for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
       std::vector<std::filesystem::path> include_directories = {};
       for (const auto &include_file : include_files)
-      {
         if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
                                                         include_file.parent_path()) == include_directories.end())
           include_directories.push_back(include_file.parent_path());
-      }
       std::string compile_include_directories = {};
       for (const auto &directory : include_directories)
         compile_include_directories += std::format("/I\"{}\" ", directory.string());
@@ -1582,11 +1575,9 @@ namespace csb
       for (const auto &definition : definitions) compile_definitions += std::format("-D{} ", definition);
       std::vector<std::filesystem::path> include_directories = {};
       for (const auto &include_file : include_files)
-      {
         if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
                                                         include_file.parent_path()) == include_directories.end())
           include_directories.push_back(include_file.parent_path());
-      }
       std::string compile_include_directories = {};
       for (const auto &directory : include_directories)
         compile_include_directories += std::format("-I\"{}\" ", directory.string());
@@ -1709,7 +1700,6 @@ namespace csb
       std::string output_name = (target_artifact == STATIC_LIBRARY || target_artifact == DYNAMIC_LIBRARY)
                                   ? "lib" + target_name + "." + extension
                                   : target_name;
-
       std::string runtime_linkage = target_linkage == STATIC ? "-static-libstdc++ -static-libgcc " : "";
       std::string link_library_directories = {};
       for (const auto &directory : library_directories)
