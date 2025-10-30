@@ -1,4 +1,4 @@
-// CSB Version 1.4.0
+// CSB Version 1.4.1
 
 #pragma once
 
@@ -141,12 +141,12 @@ concept is_tuple = requires { typename std::tuple_size<tuple_type>::type; };
 
 namespace csb::utility
 {
+  inline std::mutex output_mutex = {};
   inline std::filesystem::path build_directory = {};
   inline const std::string big_section_divider = "====================================================================="
                                                  "===================================================";
   inline const std::string small_section_divider = "-------------------------------------------------------------------"
                                                    "-----------------------------------------------------";
-  inline std::mutex output_mutex = {};
 }
 
 namespace csb
@@ -1228,11 +1228,11 @@ namespace csb
       std::string build_command = {};
       if (current_platform == WINDOWS)
         build_command = std::format("cl /nologo /EHsc /std:c++{} /O2 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
-                                    "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe --{}",
+                                    "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe build {}",
                                     (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
                                     upper_architecture, target_configuration == RELEASE ? "release" : "debug");
       else if (current_platform == LINUX)
-        build_command = std::format("g++ -std=c++{} -O2 -o build/csb csb.cpp && build/csb --{}",
+        build_command = std::format("g++ -std=c++{} -O2 -o build/csb csb.cpp && build/csb build {}",
                                     (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
                                     target_configuration == RELEASE ? "release" : "debug");
       utility::live_execute(std::format("cd {} && {}", subproject_path.string(), build_command),
