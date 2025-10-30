@@ -1,4 +1,4 @@
-// CSB Version 1.4.2
+// CSB Version 1.4.3
 
 #pragma once
 
@@ -1109,7 +1109,7 @@ namespace csb
       auto [url, extract_path, target_paths] = archive;
       if (url.empty()) throw std::runtime_error("Archive URL not set.");
       if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
-      if (std::filesystem::exists("build" / extract_path)) continue;
+      if (std::filesystem::exists(extract_path)) continue;
 
       std::string archive_name = url.substr(url.find_last_of('/') + 1);
       auto archive_path = std::filesystem::path("build") / archive_name;
