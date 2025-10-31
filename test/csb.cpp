@@ -12,10 +12,10 @@ void configure()
   csb::definitions = {"STB_IMAGE_IMPLEMENTATION"};
   csb::include_files = csb::files_from({"program/include"}, {".hpp", ".inl"});
   csb::source_files = csb::files_from({"program/source"}, {".cpp"});
-  if (csb::current_platform == WINDOWS)
+  if (csb::host_platform == WINDOWS)
     csb::libraries = {"kernel32", "user32",  "shell32", "gdi32",    "imm32",    "comdlg32", "ole32",   "oleaut32",
                       "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
-  else if (csb::current_platform == LINUX)
+  else if (csb::host_platform == LINUX)
     csb::libraries = {"c", "m", "pthread", "dl", "SDL3"};
 }
 
@@ -28,8 +28,11 @@ int clean()
 int build()
 {
   csb::vcpkg_install("2025.08.27");
-  csb::generate_compile_commands();
-  csb::clang_format("21.1.1");
+  if (!csb::is_subproject)
+  {
+    csb::generate_compile_commands();
+    csb::clang_format("21.1.1");
+  }
   csb::compile();
   csb::link();
   return CSB_SUCCESS;

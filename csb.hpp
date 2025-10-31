@@ -1,4 +1,4 @@
-// CSB Version 1.4.3
+// CSB Version 1.4.4
 
 #pragma once
 
@@ -152,8 +152,9 @@ namespace csb::utility
 namespace csb
 {
   inline std::vector<std::string> arguments = {};
-  inline platform current_platform = PLATFORM;
-  inline std::string current_architecture = ARCHITECTURE;
+  inline bool is_subproject = {};
+  inline platform host_platform = PLATFORM;
+  inline std::string host_architecture = ARCHITECTURE;
 
   inline std::string get_environment_variable(const std::string &name)
   {
@@ -166,7 +167,7 @@ namespace csb
   {
     std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
     if (!current_value.empty())
-      current_value += (current_platform == WINDOWS ? ";" : ":") + value;
+      current_value += (host_platform == WINDOWS ? ";" : ":") + value;
     else
       current_value = value;
     set_env(name, current_value);
@@ -176,7 +177,7 @@ namespace csb
   {
     std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
     if (!current_value.empty())
-      current_value = value + (current_platform == WINDOWS ? ";" : ":") + current_value;
+      current_value = value + (host_platform == WINDOWS ? ";" : ":") + current_value;
     else
       current_value = value;
     set_env(name, current_value);
@@ -317,9 +318,7 @@ namespace csb::utility
     std::vector<std::string> args;
     for (int index = 1; index < argc; ++index) args.push_back(argv[index]);
 
-    if (args.size() < 1) throw std::runtime_error("Usage: csb [clean|build|run] <release|debug> [other_arguments]");
-    if (args.front() != "clean" && args.front() != "build" && args.front() != "run")
-      throw std::runtime_error("First argument must be one of: clean, build, run.");
+    if (args.size() < 1) throw std::runtime_error("Usage: csb [clean|build|run] [custom_arguments]");
 
     for (const auto &arg : args)
     {
@@ -334,12 +333,14 @@ namespace csb::utility
         if (args.front() != "build")
           throw std::runtime_error("Configuration argument can only be used with the build task.");
         forced_configuration = RELEASE;
+        is_subproject = true;
       }
       else if (arg == "debug")
       {
         if (args.front() != "build")
           throw std::runtime_error("Configuration argument can only be used with the build task.");
         forced_configuration = DEBUG;
+        is_subproject = true;
       }
       else
         csb::arguments.push_back(arg);
@@ -652,7 +653,7 @@ namespace csb::utility
     bool needs_bootstrap = false;
 
     auto vcpkg_path = std::filesystem::path("build") / std::format("vcpkg-{}", vcpkg_version) /
-                      (current_platform == WINDOWS ? "vcpkg.exe" : "vcpkg");
+                      (host_platform == WINDOWS ? "vcpkg.exe" : "vcpkg");
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
       needs_bootstrap = true;
@@ -703,7 +704,7 @@ namespace csb::utility
     print("Bootstrapping vcpkg... ");
     utility::execute(
       std::format("cd {} && {}bootstrap-vcpkg.{} -disableMetrics", vcpkg_path.parent_path().string(),
-                  current_platform == WINDOWS ? "" : "./", current_platform == WINDOWS ? "bat" : "sh"),
+                  host_platform == WINDOWS ? "" : "./", host_platform == WINDOWS ? "bat" : "sh"),
       [](const std::string &, const std::string &result)
       {
         print("done.\n");
@@ -736,16 +737,16 @@ namespace csb::utility
       return string;
     };
 
-    if (current_architecture != "x64" && current_architecture != "arm64")
+    if (host_architecture != "x64" && host_architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
     std::string clang_architecture = {};
-    if (current_platform == WINDOWS)
-      clang_architecture = current_architecture == "x64" ? "x86_64" : "aarch64";
-    else if (current_platform == LINUX)
-      clang_architecture = to_upper(current_architecture);
-    std::filesystem::path archive = std::format(
-      "{}-{}-{}.tar.xz", current_platform == WINDOWS ? "clang+llvm" : "LLVM", clang_version,
-      current_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture);
+    if (host_platform == WINDOWS)
+      clang_architecture = host_architecture == "x64" ? "x86_64" : "aarch64";
+    else if (host_platform == LINUX)
+      clang_architecture = to_upper(host_architecture);
+    std::filesystem::path archive =
+      std::format("{}-{}-{}.tar.xz", host_platform == WINDOWS ? "clang+llvm" : "LLVM", clang_version,
+                  host_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture);
     std::string url = std::format("https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}", clang_version,
                                   archive.string());
     print_format("Downloading archive at '{}'...\n", url);
@@ -1222,16 +1223,16 @@ namespace csb
       auto build_path = subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug");
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
 
-      std::string upper_architecture = current_architecture;
+      std::string upper_architecture = host_architecture;
       std::transform(upper_architecture.begin(), upper_architecture.end(), upper_architecture.begin(),
                      [](unsigned char c) { return std::toupper(c); });
       std::string build_command = {};
-      if (current_platform == WINDOWS)
+      if (host_platform == WINDOWS)
         build_command = std::format("cl /nologo /EHsc /std:c++{} /O2 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
                                     "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe build {}",
                                     (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
                                     upper_architecture, target_configuration == RELEASE ? "release" : "debug");
-      else if (current_platform == LINUX)
+      else if (host_platform == LINUX)
         build_command = std::format("g++ -std=c++{} -O2 -o build/csb csb.cpp && build/csb build {}",
                                     (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
                                     target_configuration == RELEASE ? "release" : "debug");
@@ -1241,8 +1242,7 @@ namespace csb
       if (artifact_type == EXECUTABLE)
       {
         std::string new_path = get_env("PATH", "Could not get PATH environment variable.") +
-                               (current_platform == WINDOWS ? ";" : ":") +
-                               std::filesystem::absolute(build_path).string();
+                               (host_platform == WINDOWS ? ";" : ":") + std::filesystem::absolute(build_path).string();
         set_env("PATH", new_path);
       }
       else if (artifact_type == STATIC_LIBRARY || artifact_type == DYNAMIC_LIBRARY)
@@ -1266,11 +1266,11 @@ namespace csb
     auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
     std::string vcpkg_triplet = {};
-    if (current_platform == WINDOWS)
-      vcpkg_triplet = std::format("{}-windows{}{}", current_architecture, (target_linkage == STATIC ? "-static" : ""),
+    if (host_platform == WINDOWS)
+      vcpkg_triplet = std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
                                   (target_configuration == RELEASE ? "-release" : ""));
-    else if (current_platform == LINUX)
-      vcpkg_triplet = std::format("{}-linux", current_architecture);
+    else if (host_platform == LINUX)
+      vcpkg_triplet = std::format("{}-linux", host_architecture);
     auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
     print_format("Using vcpkg triplet: {}\n", vcpkg_triplet);
     utility::live_execute(std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}",
@@ -1539,9 +1539,9 @@ namespace csb
                        { return std::find(exclude_files.begin(), exclude_files.end(), path) != exclude_files.end(); }),
         format_files.end());
     auto clang_path = utility::bootstrap_clang(clang_version);
-    auto clang_format_path = clang_path / (current_platform == WINDOWS ? "clang-format.exe" : "clang-format");
+    auto clang_format_path = clang_path / (host_platform == WINDOWS ? "clang-format.exe" : "clang-format");
 
-    multi_task_run(std::format("{} -i \"[]\"", (current_platform == WINDOWS ? "" : "./") + clang_format_path.string()),
+    multi_task_run(std::format("{} -i \"[]\"", (host_platform == WINDOWS ? "" : "./") + clang_format_path.string()),
                    format_files, {format_directory / "[.filename].formatted"});
   }
 
@@ -1552,7 +1552,7 @@ namespace csb
     print_format("\n{}\nCleaning build directory... ", utility::small_section_divider);
     for (const auto &entry : std::filesystem::directory_iterator("build"))
     {
-      if (entry.path().filename() == std::format("csb{}", (current_platform == WINDOWS ? ".exe" : ""))) continue;
+      if (entry.path().filename() == std::format("csb{}", (host_platform == WINDOWS ? ".exe" : ""))) continue;
       std::filesystem::remove_all(entry.path());
     }
     print_format("done.\n{}\n", utility::small_section_divider);
@@ -1582,7 +1582,7 @@ namespace csb
     if (!std::filesystem::exists(utility::build_directory))
       std::filesystem::create_directories(utility::build_directory);
 
-    if (current_platform == WINDOWS)
+    if (host_platform == WINDOWS)
     {
       std::string compile_debug_flags = target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 ";
       std::string runtime_library = target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
@@ -1646,7 +1646,7 @@ namespace csb
           return false;
         });
     }
-    else if (current_platform == LINUX)
+    else if (host_platform == LINUX)
     {
       std::string compile_debug_flags = target_configuration == RELEASE ? "-O2 " : "-O0 -g ";
       std::string compile_pic_flag = target_artifact == DYNAMIC_LIBRARY ? "-fPIC " : "";
@@ -1725,7 +1725,7 @@ namespace csb
   {
     if (!std::filesystem::exists(utility::build_directory)) throw std::runtime_error("Link called before compile.");
 
-    if (current_platform == WINDOWS)
+    if (host_platform == WINDOWS)
     {
       std::string executable_option = target_artifact == STATIC_LIBRARY ? "lib" : "link";
       std::string console_option = target_subsystem == CONSOLE ? "CONSOLE" : "WINDOWS";
@@ -1766,12 +1766,12 @@ namespace csb
       if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / (target_name + ".pdb"));
 
       task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
-                           current_architecture, dynamic_flags, console_option, link_debug_flags,
-                           link_library_directories, link_libraries, link_objects, output_flags,
+                           host_architecture, dynamic_flags, console_option, link_debug_flags, link_library_directories,
+                           link_libraries, link_objects, output_flags,
                            (utility::build_directory / (target_name + "." + extension)).string()),
                target_files, check_files);
     }
-    else if (current_platform == LINUX)
+    else if (host_platform == LINUX)
     {
       std::string extension = target_artifact == STATIC_LIBRARY ? "a" : target_artifact == DYNAMIC_LIBRARY ? "so" : "";
       std::string output_name = (target_artifact == STATIC_LIBRARY || target_artifact == DYNAMIC_LIBRARY)
@@ -1812,9 +1812,9 @@ namespace csb
   {
     if (target_artifact != EXECUTABLE) throw std::runtime_error("Target artifact is not an executable.");
     std::filesystem::path executable_path = std::format(
-      "{}{}{}", (current_platform == LINUX ? "./" : ""),
+      "{}{}{}", (host_platform == LINUX ? "./" : ""),
       (std::filesystem::path("build") / (target_configuration == RELEASE ? "release" : "debug") / target_name).string(),
-      (current_platform == WINDOWS ? ".exe" : ""));
+      (host_platform == WINDOWS ? ".exe" : ""));
     if (!std::filesystem::exists(executable_path))
       throw std::runtime_error("Executable does not exist: " + executable_path.string() + ".");
 
@@ -1839,17 +1839,17 @@ namespace csb
 #define CSB_MAIN()                                                                                                     \
   int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
-    if (csb::current_platform == WINDOWS)                                                                              \
+    if (csb::host_platform == WINDOWS)                                                                                 \
     {                                                                                                                  \
       const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";       \
       const std::string vs_path = csb::utility::strict_get_env("VSINSTALLDIR", error_message);                         \
       const std::string toolset_version = csb::utility::strict_get_env("VCToolsVersion", error_message);               \
       const std::string sdk_version = csb::utility::strict_get_env("WindowsSDKVersion", error_message);                \
-      csb::print_format("Visual Studio: {}\nToolset: {}\nWindows SDK: {}\nArchitecture: {}\n", vs_path,                \
-                        toolset_version, sdk_version, csb::current_architecture);                                      \
+      csb::print_format("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n", csb::host_architecture, \
+                        vs_path, toolset_version, sdk_version);                                                        \
     }                                                                                                                  \
-    else if (csb::current_platform == LINUX)                                                                           \
-      csb::print_format("Architecture: {}\n", csb::current_architecture);                                              \
+    else if (csb::host_platform == LINUX)                                                                              \
+      csb::print_format("Architecture: {}\n", csb::host_architecture);                                                 \
     else                                                                                                               \
       throw std::runtime_error("Unsupported platform.");                                                               \
                                                                                                                        \
@@ -1857,9 +1857,14 @@ namespace csb
     {                                                                                                                  \
       csb::utility::handle_arguments(argc, argv);                                                                      \
       configure();                                                                                                     \
-      if (csb::utility::current_task == CLEAN) return clean();                                                         \
-      if (csb::utility::current_task == BUILD) return build();                                                         \
-      if (csb::utility::current_task == RUN) return run();                                                             \
+      if (csb::utility::current_task == CLEAN)                                                                         \
+        return clean();                                                                                                \
+      else if (csb::utility::current_task == BUILD)                                                                    \
+        return build();                                                                                                \
+      else if (csb::utility::current_task == RUN)                                                                      \
+        return run();                                                                                                  \
+      else                                                                                                             \
+        throw std::runtime_error("No valid task specified.");                                                          \
     }                                                                                                                  \
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
