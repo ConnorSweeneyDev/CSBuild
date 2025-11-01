@@ -1,4 +1,4 @@
-// CSB Version 1.4.4
+// CSB Version 1.4.5
 
 #pragma once
 
@@ -293,6 +293,7 @@ enum linkage
 };
 enum task
 {
+  NONE,
   CLEAN,
   BUILD,
   RUN
@@ -330,15 +331,15 @@ namespace csb::utility
         current_task = RUN;
       else if (arg == "release")
       {
-        if (args.front() != "build")
-          throw std::runtime_error("Configuration argument can only be used with the build task.");
+        if (current_task != BUILD)
+          throw std::runtime_error("Release argument can only be used with the build task.");
         forced_configuration = RELEASE;
         is_subproject = true;
       }
       else if (arg == "debug")
       {
-        if (args.front() != "build")
-          throw std::runtime_error("Configuration argument can only be used with the build task.");
+        if (current_task != BUILD)
+          throw std::runtime_error("Debug argument can only be used with the build task.");
         forced_configuration = DEBUG;
         is_subproject = true;
       }
@@ -1086,6 +1087,42 @@ namespace csb
     print(utility::small_section_divider + "\n");
   }
 
+  inline void file_install(
+    const std::vector<std::tuple<std::string, std::filesystem::path>> &files)
+  {
+    if (files.empty()) throw std::runtime_error("No files to install.");
+    bool all_exist = true;
+    for (const auto &file : files)
+    {
+      auto [url, target_path] = file;
+      if (url.empty()) throw std::runtime_error("File URL not set.");
+      if (target_path.empty()) throw std::runtime_error("File target path not set.");
+      if (!std::filesystem::exists(target_path))
+      {
+        all_exist = false;
+        break;
+      }
+    }
+    if (all_exist) return;
+    print_format("\n{}\n", utility::small_section_divider);
+
+    for (const auto &file : files)
+    {
+      auto [url, target_path] = file;
+      if (std::filesystem::exists(target_path)) continue;
+      if (!std::filesystem::exists(target_path)) std::filesystem::create_directories(target_path);
+
+      std::string file_name = url.substr(url.find_last_of('/') + 1);
+      std::filesystem::path file_path = target_path / file_name;
+      print_format("Downloading file at '{}' to '{}'...\n", url, file_path.string());
+      utility::live_execute(std::format("curl -f -L -C - -o {} {}", file_path.string(), url),
+                            "Failed to download file: " + url, false);
+      print("done.\n");
+    }
+
+    print(utility::small_section_divider + "\n");
+  }
+
   inline void archive_install(
     const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>> &archives)
   {
@@ -1108,8 +1145,6 @@ namespace csb
     for (const auto &archive : archives)
     {
       auto [url, extract_path, target_paths] = archive;
-      if (url.empty()) throw std::runtime_error("Archive URL not set.");
-      if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
       if (std::filesystem::exists(extract_path)) continue;
 
       std::string archive_name = url.substr(url.find_last_of('/') + 1);
@@ -1808,7 +1843,7 @@ namespace csb
     }
   }
 
-  inline void execute_target(const std::variant<std::string, std::vector<std::string>> &target_arguments = {})
+  inline void run_target(const std::variant<std::string, std::vector<std::string>> &target_arguments = {})
   {
     if (target_artifact != EXECUTABLE) throw std::runtime_error("Target artifact is not an executable.");
     std::filesystem::path executable_path = std::format(
@@ -1864,7 +1899,7 @@ namespace csb
       else if (csb::utility::current_task == RUN)                                                                      \
         return run();                                                                                                  \
       else                                                                                                             \
-        throw std::runtime_error("No valid task specified.");                                                          \
+        throw std::runtime_error("No task specified.");                                                          \
     }                                                                                                                  \
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \

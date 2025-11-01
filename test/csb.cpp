@@ -40,7 +40,7 @@ int build()
 
 int run()
 {
-  csb::execute_target();
+  csb::run_target();
   return CSB_SUCCESS;
 }
 
