@@ -1,4 +1,4 @@
-// CSB Version 1.4.6
+// CSB Version 1.4.7
 
 #pragma once
 
@@ -795,19 +795,13 @@ namespace csb
     return ss.str();
   };
 
-  inline void task_run(const std::variant<std::string, std::function<std::string()>, std::function<void()>> &task)
+  inline void task_run(const std::variant<std::string, std::function<void()>> &task)
   {
     print_format("\n{}\n", utility::small_section_divider);
 
-    if (std::holds_alternative<std::string>(task) || std::holds_alternative<std::function<std::string()>>(task))
-    {
-      std::string command = {};
-      if (std::holds_alternative<std::string>(task))
-        command = std::get<std::string>(task);
-      else
-        command = std::get<std::function<std::string()>>(task)();
+    if (std::holds_alternative<std::string>(task))
       utility::execute(
-        command,
+        std::get<std::string>(task),
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
@@ -820,7 +814,6 @@ namespace csb
                        (result.empty() ? "" : result + "\n\n"));
           throw std::runtime_error("Task failed.");
         });
-    }
     else if (std::holds_alternative<std::function<void()>>(task))
       std::get<std::function<void()>>(task)();
     else
@@ -828,22 +821,17 @@ namespace csb
 
     print(utility::small_section_divider + "\n");
   }
+  inline void task_run(const std::function<std::string()> &task) { task_run(task()); }
 
-  inline void task_run(const std::variant<std::string, std::function<std::string()>, std::function<void()>> &task,
+  inline void task_run(const std::variant<std::string, std::function<void()>> &task,
                        const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
     print_format("\n{}\n", utility::small_section_divider);
 
-    if (std::holds_alternative<std::string>(task) || std::holds_alternative<std::function<std::string()>>(task))
-    {
-      std::string command = {};
-      if (std::holds_alternative<std::string>(task))
-        command = std::get<std::string>(task);
-      else
-        command = std::get<std::function<std::string()>>(task)();
+    if (std::holds_alternative<std::string>(task))
       utility::execute(
-        utility::placeholder_path_replace(command, {check_file}),
+        utility::placeholder_path_replace(std::get<std::string>(task), {check_file}),
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
@@ -857,7 +845,6 @@ namespace csb
                        (result.empty() ? "" : result + "\n\n"));
           throw std::runtime_error("Task failed.");
         });
-    }
     else if (std::holds_alternative<std::function<void()>>(task))
     {
       std::get<std::function<void()>>(task)();
@@ -868,9 +855,13 @@ namespace csb
 
     print(utility::small_section_divider + "\n");
   }
+  inline void task_run(const std::function<std::string()> &task, const std::filesystem::path &check_file)
+  {
+    task_run(task(), check_file);
+  }
 
   inline void
-  task_run(const std::variant<std::string, std::function<std::string()>, std::function<void()>> &task,
+  task_run(const std::variant<std::string, std::function<void()>> &task,
            const std::vector<std::filesystem::path> &target_files,
            const std::vector<std::filesystem::path> &check_files,
            const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
@@ -880,15 +871,9 @@ namespace csb
     if (modified_files.empty()) return;
     print_format("\n{}\n", utility::small_section_divider);
 
-    if (std::holds_alternative<std::string>(task) || std::holds_alternative<std::function<std::string()>>(task))
-    {
-      std::string command = {};
-      if (std::holds_alternative<std::string>(task))
-        command = std::get<std::string>(task);
-      else
-        command = std::get<std::function<std::string()>>(task)();
+    if (std::holds_alternative<std::string>(task))
       utility::execute(
-        utility::placeholder_path_replace(command, target_files),
+        utility::placeholder_path_replace(std::get<std::string>(task), target_files),
         [&](const std::string &real_command, std::string result)
         {
           result = remove_trailing_and_leading_newlines(result);
@@ -903,7 +888,6 @@ namespace csb
                        (result.empty() ? "" : result + "\n\n"));
           throw std::runtime_error("Task failed.");
         });
-    }
     else if (std::holds_alternative<std::function<void()>>(task))
     {
       std::get<std::function<void()>>(task)();
@@ -915,9 +899,16 @@ namespace csb
 
     print(utility::small_section_divider + "\n");
   }
+  inline void
+  task_run(const std::function<std::string()> &task, const std::vector<std::filesystem::path> &target_files,
+           const std::vector<std::filesystem::path> &check_files,
+           const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+             &dependency_handler = nullptr)
+  {
+    task_run(task(), target_files, check_files, dependency_handler);
+  }
 
-  inline void multi_task_run(const std::variant<std::string, std::function<std::string(const std::filesystem::path &)>,
-                                                std::function<void(const std::filesystem::path &)>> &task,
+  inline void multi_task_run(const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
                              const std::vector<std::filesystem::path> &check_files)
   {
     std::vector<std::filesystem::path> target_files = {};
@@ -944,54 +935,6 @@ namespace csb
                        (result.empty() ? "" : result + "\n"));
           throw std::runtime_error("Task failed.");
         });
-    else if (std::holds_alternative<std::function<std::string(const std::filesystem::path &)>>(task))
-    {
-      std::vector<std::exception_ptr> exceptions = {};
-      std::mutex exceptions_mutex = {};
-      std::atomic<bool> should_stop = false;
-      std::for_each(std::execution::par, target_files.begin(), target_files.end(),
-                    [&](const std::filesystem::path &file)
-                    {
-                      try
-                      {
-                        utility::execute(
-                          std::get<std::function<std::string(const std::filesystem::path &)>>(task)(file),
-                          [&](const std::string &real_command, std::string result)
-                          {
-                            result = remove_trailing_and_leading_newlines(result);
-                            print_format("\n{}\n{}", real_command, (result.empty() ? "" : result + "\n"));
-                            touch(file);
-                          },
-                          [&](const std::string &real_command, const int return_code, std::string result)
-                          {
-                            result = remove_trailing_and_leading_newlines(result);
-                            print_format("\n{} -> {}\n{}", real_command, std::to_string(return_code),
-                                         (result.empty() ? "" : result + "\n"));
-                            throw std::runtime_error("Task failed.");
-                          });
-                      }
-                      catch (const std::exception &error)
-                      {
-                        std::lock_guard<std::mutex> lock(exceptions_mutex);
-                        exceptions.push_back(std::make_exception_ptr(
-                          std::runtime_error(std::format("{}: {}", file.string(), error.what()))));
-                      }
-                    });
-      if (!exceptions.empty())
-      {
-        for (const auto &exception : exceptions) try
-          {
-            if (exception) std::rethrow_exception(exception);
-          }
-          catch (const std::exception &e)
-          {
-            std::cerr << e.what() << std::endl;
-            should_stop = true;
-          }
-        return;
-      }
-      if (should_stop) throw std::runtime_error("Task function errors occurred.");
-    }
     else if (std::holds_alternative<std::function<void(const std::filesystem::path &)>>(task))
     {
       std::vector<std::exception_ptr> exceptions = {};
@@ -1032,10 +975,14 @@ namespace csb
 
     print(utility::small_section_divider + "\n");
   }
+  inline void multi_task_run(const std::function<std::string()> &task,
+                             const std::vector<std::filesystem::path> &check_files)
+  {
+    multi_task_run(task(), check_files);
+  }
 
   inline void
-  multi_task_run(const std::variant<std::string, std::function<std::string(const std::filesystem::path &)>,
-                                    std::function<void(const std::filesystem::path &)>> &task,
+  multi_task_run(const std::variant<std::string, std::function<void(const std::filesystem::path &)>> &task,
                  const std::vector<std::filesystem::path> &target_files,
                  const std::vector<std::filesystem::path> &check_files,
                  const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
@@ -1063,54 +1010,6 @@ namespace csb
                        (result.empty() ? "" : result + "\n"));
           throw std::runtime_error("Task failed.");
         });
-    else if (std::holds_alternative<std::function<std::string(const std::filesystem::path &)>>(task))
-    {
-      std::vector<std::exception_ptr> exceptions = {};
-      std::mutex exceptions_mutex = {};
-      std::atomic<bool> should_stop = false;
-      std::for_each(std::execution::par, modified_files.begin(), modified_files.end(),
-                    [&](const auto &file)
-                    {
-                      try
-                      {
-                        utility::execute(
-                          std::get<std::function<std::string(const std::filesystem::path &)>>(task)(file.first),
-                          [&](const std::string &real_command, std::string result)
-                          {
-                            result = remove_trailing_and_leading_newlines(result);
-                            print_format("\n{}\n{}", real_command, (result.empty() ? "" : result + "\n"));
-                            for (const auto &dependency : file.second) touch(dependency);
-                          },
-                          [&](const std::string &real_command, const int return_code, std::string result)
-                          {
-                            result = remove_trailing_and_leading_newlines(result);
-                            print_format("\n{} -> {}\n{}", real_command, std::to_string(return_code),
-                                         (result.empty() ? "" : result + "\n"));
-                            throw std::runtime_error("Task failed.");
-                          });
-                      }
-                      catch (const std::exception &error)
-                      {
-                        std::lock_guard<std::mutex> lock(exceptions_mutex);
-                        exceptions.push_back(std::make_exception_ptr(
-                          std::runtime_error(std::format("{}: {}", file.first.string(), error.what()))));
-                      }
-                    });
-      if (!exceptions.empty())
-      {
-        for (const auto &exception : exceptions) try
-          {
-            if (exception) std::rethrow_exception(exception);
-          }
-          catch (const std::exception &e)
-          {
-            std::cerr << e.what() << std::endl;
-            should_stop = true;
-          }
-        return;
-      }
-      if (should_stop) throw std::runtime_error("Task function errors occurred.");
-    }
     else if (std::holds_alternative<std::function<void(const std::filesystem::path &)>>(task))
     {
       std::vector<std::exception_ptr> exceptions = {};
@@ -1151,41 +1050,42 @@ namespace csb
 
     print(utility::small_section_divider + "\n");
   }
+  inline void
+  multi_task_run(const std::function<std::string()> &task, const std::vector<std::filesystem::path> &target_files,
+                 const std::vector<std::filesystem::path> &check_files,
+                 const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+                   &dependency_handler = nullptr)
+  {
+    multi_task_run(task(), target_files, check_files, dependency_handler);
+  }
 
-  inline void live_task_run(const std::variant<std::string, std::function<std::string()>> &task)
+  inline void live_task_run(const std::string &task)
   {
     print_format("\n{}\n", utility::small_section_divider);
 
-    std::string command = {};
-    if (std::holds_alternative<std::string>(task))
-      command = std::get<std::string>(task);
-    else
-      command = std::get<std::function<std::string()>>(task)();
-    utility::live_execute(command, "Failed to run task: " + command, true);
+    utility::live_execute(task, "Failed to run task: " + task, true);
 
     print(utility::small_section_divider + "\n");
   }
+  inline void live_task_run(const std::function<std::string()> &task) { live_task_run(task()); }
 
-  inline void live_task_run(const std::variant<std::string, std::function<std::string()>> &task,
-                            const std::filesystem::path &check_file)
+  inline void live_task_run(const std::string &task, const std::filesystem::path &check_file)
   {
     if (std::filesystem::exists(check_file)) return;
     print_format("\n{}\n", utility::small_section_divider);
 
-    std::string command = {};
-    if (std::holds_alternative<std::string>(task))
-      command = std::get<std::string>(task);
-    else
-      command = std::get<std::function<std::string()>>(task)();
-    utility::live_execute(command, "Failed to run task: " + command, true);
+    utility::live_execute(task, "Failed to run task: " + task, true);
     touch(check_file);
 
     print(utility::small_section_divider + "\n");
   }
+  inline void live_task_run(const std::function<std::string()> &task, const std::filesystem::path &check_file)
+  {
+    live_task_run(task(), check_file);
+  }
 
   inline void
-  live_task_run(const std::variant<std::string, std::function<std::string()>> &task,
-                const std::vector<std::filesystem::path> &target_files,
+  live_task_run(const std::string &task, const std::vector<std::filesystem::path> &target_files,
                 const std::vector<std::filesystem::path> &check_files,
                 const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
                   &dependency_handler = nullptr)
@@ -1194,16 +1094,19 @@ namespace csb
     if (modified_files.empty()) return;
     print_format("\n{}\n", utility::small_section_divider);
 
-    std::string command = {};
-    if (std::holds_alternative<std::string>(task))
-      command = std::get<std::string>(task);
-    else
-      command = std::get<std::function<std::string()>>(task)();
-    utility::live_execute(command, "Failed to run task: " + command, true);
+    utility::live_execute(task, "Failed to run task: " + task, true);
     for (const auto &file : modified_files)
       for (const auto &dependency : file.second) touch(dependency);
 
     print(utility::small_section_divider + "\n");
+  }
+  inline void
+  live_task_run(const std::function<std::string()> &task, const std::vector<std::filesystem::path> &target_files,
+                const std::vector<std::filesystem::path> &check_files,
+                const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
+                  &dependency_handler = nullptr)
+  {
+    live_task_run(task(), target_files, check_files, dependency_handler);
   }
 
   inline void file_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &files)
