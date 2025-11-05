@@ -1,4 +1,4 @@
-// CSB Version 1.4.7
+// CSB Version 1.4.8
 
 #pragma once
 
@@ -1349,7 +1349,7 @@ namespace csb
                      std::function<std::string(const std::filesystem::path &, const std::string &, const tuple_type &)>,
                      std::function<std::string(const std::filesystem::path &)>,
                      std::function<tuple_type(const std::filesystem::path &)>,
-                     std::function<std::vector<std::string>(const tuple_type &)>> &middle_content,
+                     std::function<std::vector<std::string>(const std::string &, const tuple_type &)>> &middle_content,
     const std::pair<
       std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, tuple_type>> &)>,
       std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, tuple_type>> &)>>
@@ -1367,7 +1367,7 @@ namespace csb
     const auto &[output_header, output_source] = outputs;
 
     auto substitute_file_data =
-      [&](std::string placeholder, const tuple_type &data,
+      [&](std::string placeholder, const std::string &name, const tuple_type &data,
           const std::function<std::vector<std::string>(const tuple_type &)> &handler) -> std::string
     {
       size_t pos = 0;
@@ -1385,7 +1385,7 @@ namespace csb
 
       std::vector<std::string> data_values = {};
       if (handler)
-        data_values = handler(data);
+        data_values = handler(name, data);
       else
       {
         data_values.push_back("");
@@ -1476,9 +1476,11 @@ namespace csb
             std::replace(name.begin(), name.end(), '-', '_');
           }
           if (header_function)
-            header_content += substitute_file_data(header_function(resource, name, data), data, data_format_function);
+            header_content +=
+              substitute_file_data(header_function(resource, name, data), name, data, data_format_function);
           if (source_function)
-            source_content += substitute_file_data(source_function(resource, name, data), data, data_format_function);
+            source_content +=
+              substitute_file_data(source_function(resource, name, data), name, data, data_format_function);
           files.push_back(std::make_tuple(resource, name, data));
         }
         if (header_end_function) header_content += header_end_function(files);
