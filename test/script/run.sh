@@ -1,3 +1,3 @@
 #!/bin/bash
 
-./build/csb clean
+./build/csb run
