@@ -1,15 +1,22 @@
 #include "sdl.hpp"
 
+#include <cstdlib>
+#include <iostream>
+
 #include "SDL3/SDL_error.h"
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_timer.h"
 #include "SDL3/SDL_video.h"
 
-#include <cstdlib>
-#include <iostream>
+extern "C"
+{
+#include "message.h"
+}
 
 void create_and_destroy_window()
 {
+  print_message();
+
   if (!SDL_Init(SDL_INIT_VIDEO))
   {
     std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;

@@ -1,4 +1,4 @@
-// CSB Version 1.4.9
+// CSB Version 1.4.10
 
 #pragma once
 
@@ -1465,15 +1465,20 @@ namespace csb
                   cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard));
     for (auto iterator = source_files.begin(); iterator != source_files.end();)
     {
+      std::string compiler = {};
+      if ((*iterator).extension() == ".c")
+        compiler = "clang -std=c17";
+      else
+        compiler = "clang++ -std=c++" + std::to_string(cxx_standard);
       content += "  {\n";
       content +=
         std::format("    \"directory\": \"{}\",\n", escape_backslashes(std::filesystem::current_path().string()));
       content +=
         std::format("    \"file\": \"{}\",\n", escape_backslashes(std::filesystem::absolute(*iterator).string()));
-      content += std::format("    \"command\": \"clang++ -std=c++{} -Wall -Wextra -Wpedantic -Wconversion -Wshadow-all "
+      content += std::format("    \"command\": \"{} -Wall -Wextra -Wpedantic -Wconversion -Wshadow-all "
                              "-Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal "
                              "-Wunreachable-code-aggressive -Wformat=2 ",
-                             std::to_string(cxx_standard));
+                             compiler);
       for (const auto &definition : definitions) content += std::format("-D{} ", definition);
       std::vector<std::filesystem::path> include_directories = {};
       for (const auto &include_file : include_files)
@@ -1588,13 +1593,21 @@ namespace csb
       if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / "[.filename.stem].pdb");
 
       multi_task_run(
-        std::format(
-          "cl /nologo /std:c++{} /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-          "/Fd{} /sourceDependencies{} {}{}/c \"[]\"",
-          std::to_string(cxx_standard), std::to_string(warning_level), compile_debug_flags, runtime_library,
-          compile_definitions, utility::build_directory.string(), utility::build_directory.string(),
-          (utility::build_directory / "[.stem].pdb").string(), (utility::build_directory / "[.stem].d").string(),
-          compile_include_directories, compile_external_include_directories),
+        [&](const auto &file)
+        {
+          std::string compiler = {};
+          if (file.extension() == ".c")
+            compiler = "cl /std:c17 /TC";
+          else
+            compiler = "cl /std:c++" + std::to_string(cxx_standard);
+          return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
+                             "/Fd{} /sourceDependencies{} {}{}/c \"[]\"",
+                             compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
+                             compile_definitions, utility::build_directory.string(), utility::build_directory.string(),
+                             (utility::build_directory / "[.stem].pdb").string(),
+                             (utility::build_directory / "[.stem].d").string(), compile_include_directories,
+                             compile_external_include_directories);
+        },
         source_files, check_files,
         [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
         {
@@ -1656,51 +1669,59 @@ namespace csb
         warning_flags +=
           "-Wconversion -Wshadow -Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal -Wformat=2 ";
 
-      multi_task_run(std::format("g++ -std=c++{} {}{}{}-MMD -MP {}{}{}-c \"[]\" -o {}/[.stem].o",
-                                 std::to_string(cxx_standard), warning_flags, compile_debug_flags, compile_pic_flag,
-                                 compile_definitions, compile_include_directories, compile_external_include_directories,
-                                 utility::build_directory.string()),
-                     source_files, check_files,
-                     [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
-                     {
-                       auto object_time = std::filesystem::last_write_time(checked_files[0]);
-                       std::filesystem::path dependency_path = checked_files[1];
+      multi_task_run(
+        [&](const auto &file)
+        {
+          std::string compiler = {};
+          if (file.extension() == ".c")
+            compiler = "gcc";
+          else
+            compiler = "g++ -std=c++" + std::to_string(cxx_standard);
+          return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"[]\" -o {}/[.stem].o", compiler, warning_flags,
+                             compile_debug_flags, compile_pic_flag, compile_definitions, compile_include_directories,
+                             compile_external_include_directories, utility::build_directory.string());
+        },
+        source_files, check_files,
+        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
+        {
+          auto object_time = std::filesystem::last_write_time(checked_files[0]);
+          std::filesystem::path dependency_path = checked_files[1];
 
-                       std::ifstream dependency_file(dependency_path);
-                       if (!dependency_file.is_open()) return true;
-                       std::string line;
-                       std::string full_content;
-                       while (std::getline(dependency_file, line))
-                       {
-                         if (line.empty()) continue;
-                         if (line.back() == '\\') line.pop_back();
-                         full_content += line + " ";
-                       }
-                       dependency_file.close();
+          std::ifstream dependency_file(dependency_path);
+          if (!dependency_file.is_open()) return true;
+          std::string line;
+          std::string full_content;
+          while (std::getline(dependency_file, line))
+          {
+            if (line.empty()) continue;
+            if (line.back() == '\\') line.pop_back();
+            full_content += line + " ";
+          }
+          dependency_file.close();
 
-                       size_t colon_pos = full_content.find(':');
-                       if (colon_pos == std::string::npos) return true;
-                       std::string dependencies = full_content.substr(colon_pos + 1);
+          size_t colon_pos = full_content.find(':');
+          if (colon_pos == std::string::npos) return true;
+          std::string dependencies = full_content.substr(colon_pos + 1);
 
-                       size_t pos = 0;
-                       while (pos < dependencies.length())
-                       {
-                         while (pos < dependencies.length() && std::isspace(dependencies[pos])) pos++;
-                         if (pos >= dependencies.length()) break;
+          size_t pos = 0;
+          while (pos < dependencies.length())
+          {
+            while (pos < dependencies.length() && std::isspace(dependencies[pos])) pos++;
+            if (pos >= dependencies.length()) break;
 
-                         size_t end = pos;
-                         while (end < dependencies.length() && !std::isspace(dependencies[end])) end++;
+            size_t end = pos;
+            while (end < dependencies.length() && !std::isspace(dependencies[end])) end++;
 
-                         std::filesystem::path include_path = dependencies.substr(pos, end - pos);
-                         if (std::filesystem::exists(include_path))
-                         {
-                           auto include_time = std::filesystem::last_write_time(include_path);
-                           if (include_time > object_time) return true;
-                         }
-                         pos = end;
-                       }
-                       return false;
-                     });
+            std::filesystem::path include_path = dependencies.substr(pos, end - pos);
+            if (std::filesystem::exists(include_path))
+            {
+              auto include_time = std::filesystem::last_write_time(include_path);
+              if (include_time > object_time) return true;
+            }
+            pos = end;
+          }
+          return false;
+        });
     }
   }
 

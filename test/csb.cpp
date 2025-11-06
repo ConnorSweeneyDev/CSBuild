@@ -10,8 +10,8 @@ void configure()
   csb::cxx_standard = CXX20;
   csb::warning_level = W4;
   csb::definitions = {"STB_IMAGE_IMPLEMENTATION"};
-  csb::include_files = csb::files_from({"program/include"}, {".hpp", ".inl"});
-  csb::source_files = csb::files_from({"program/source"}, {".cpp"});
+  csb::include_files = csb::files_from({"program/include"});
+  csb::source_files = csb::files_from({"program/source"});
   if (csb::host_platform == WINDOWS)
     csb::libraries = {"kernel32", "user32",  "shell32", "gdi32",    "imm32",    "comdlg32", "ole32",   "oleaut32",
                       "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
