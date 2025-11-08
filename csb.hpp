@@ -1,4 +1,4 @@
-// CSB Version 1.4.11
+// CSB Version 1.4.12
 
 #pragma once
 
@@ -197,7 +197,8 @@ namespace csb
 
   inline void touch(const std::filesystem::path &path)
   {
-    if (!std::filesystem::exists(path.parent_path())) std::filesystem::create_directories(path.parent_path());
+    if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
+      std::filesystem::create_directories(path.parent_path());
     if (std::filesystem::exists(path))
       std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
     else
@@ -407,7 +408,7 @@ namespace csb::utility
               else if (method == "extension")
                 path = path.extension();
               else if (method == "parent_path")
-                path = path.parent_path();
+                path = path.has_parent_path() ? path.parent_path() : path;
               else if (method == "lexically_normal")
                 path = path.lexically_normal();
               else if (method == "absolute")
@@ -1530,7 +1531,7 @@ namespace csb
     auto clang_format_path = clang_path / (host_platform == WINDOWS ? "clang-format.exe" : "clang-format");
 
     multi_task_run(std::format("{} -i \"[]\"", (host_platform == WINDOWS ? "" : "./") + clang_format_path.string()),
-                   format_files, {format_directory / "[.filename].formatted"});
+                   format_files, {format_directory / "[.filename].formatted", ".clang-format"});
   }
 
   inline void clean_build_directory()
