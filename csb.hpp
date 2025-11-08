@@ -1,4 +1,4 @@
-// CSB Version 1.4.10
+// CSB Version 1.4.11
 
 #pragma once
 
@@ -1674,7 +1674,7 @@ namespace csb
         {
           std::string compiler = {};
           if (file.extension() == ".c")
-            compiler = "gcc";
+            compiler = "gcc -std=c17";
           else
             compiler = "g++ -std=c++" + std::to_string(cxx_standard);
           return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"[]\" -o {}/[.stem].o", compiler, warning_flags,
