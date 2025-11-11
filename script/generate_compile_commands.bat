@@ -1,4 +1,5 @@
 @echo off
+
 set "CURRENT_DIR=%CD%"
 (
 echo [
