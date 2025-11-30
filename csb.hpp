@@ -1,4 +1,4 @@
-// CSB Version 1.6.0
+// CSB Version 1.6.1
 
 #pragma once
 
@@ -2148,22 +2148,22 @@ namespace csb
 #define CSB_MAIN()                                                                                                     \
   int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
-    if (csb::host_platform == WINDOWS)                                                                                 \
-    {                                                                                                                  \
-      const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";       \
-      const std::string vs_path = csb::utility::strict_get_env("VSINSTALLDIR", error_message);                         \
-      const std::string toolset_version = csb::utility::strict_get_env("VCToolsVersion", error_message);               \
-      const std::string sdk_version = csb::utility::strict_get_env("WindowsSDKVersion", error_message);                \
-      csb::print_format("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n", csb::host_architecture, \
-                        vs_path, toolset_version, sdk_version);                                                        \
-    }                                                                                                                  \
-    else if (csb::host_platform == LINUX)                                                                              \
-      csb::print_format("Architecture: {}\n", csb::host_architecture);                                                 \
-    else                                                                                                               \
-      throw std::runtime_error("Unsupported platform.");                                                               \
-                                                                                                                       \
     try                                                                                                                \
     {                                                                                                                  \
+      if (csb::host_platform == WINDOWS)                                                                               \
+      {                                                                                                                \
+        const std::string error_message = "Ensure you are running from an environment with access to MSVC tools.";     \
+        const std::string vs_path = csb::utility::strict_get_env("VSINSTALLDIR", error_message);                       \
+        const std::string toolset_version = csb::utility::strict_get_env("VCToolsVersion", error_message);             \
+        const std::string sdk_version = csb::utility::strict_get_env("WindowsSDKVersion", error_message);              \
+        csb::print_format("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n",                       \
+                          csb::host_architecture, vs_path, toolset_version, sdk_version);                              \
+      }                                                                                                                \
+      else if (csb::host_platform == LINUX)                                                                            \
+        csb::print_format("Architecture: {}\n", csb::host_architecture);                                               \
+      else                                                                                                             \
+        throw std::runtime_error("Unsupported platform.");                                                             \
+                                                                                                                       \
       csb::utility::handle_arguments(argc, argv);                                                                      \
       configure();                                                                                                     \
       if (csb::utility::current_task == CLEAN)                                                                         \
@@ -2177,7 +2177,7 @@ namespace csb
     }                                                                                                                  \
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
-      std::cerr << "Error: " << exception.what() << std::endl;                                                         \
+      csb::print_format("{}\n", exception.what());                                                                     \
       return CSB_FAILURE;                                                                                              \
     }                                                                                                                  \
   }
