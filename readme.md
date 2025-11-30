@@ -16,8 +16,9 @@ A zero dependency, cross-platform build system for C++ projects.
 
 ## Requirements
 - Windows or Linux OS.
-- An environment with access to `cl`, `link` and `lib` on Windows or `g++` and `ar` on Linux.
+- An environment with access to `cl`, `link` and `lib` on Windows or `gcc`, `g++` and `ar` on Linux.
 - An environment with access to `git`.
 
-See the [test](test) directory for an example project that uses all of the most important features, but to see a real
-example of a project using it, look at [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine).
+## Usage
+See the [test](test) directory for an example project that uses all of the basic features, but to see a real example of
+a project using it, look at [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine).
