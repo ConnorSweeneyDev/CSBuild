@@ -210,7 +210,7 @@ namespace csb
       std::clog.flush();
     }
     else
-      throw exception("Invalid print stream specification");
+      throw std::runtime_error("Invalid print stream specification");
   }
 
   inline void touch(const std::filesystem::path &path)
