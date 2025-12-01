@@ -1,4 +1,4 @@
-// CSB Version 1.6.2
+// CSB Version 1.6.3
 
 #pragma once
 
@@ -136,6 +136,8 @@ concept iterable_path_dependency = requires(container_type &type) {
 };
 template <typename tuple_type>
 concept is_tuple = requires { typename std::tuple_size<tuple_type>::type; };
+template <typename type>
+concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>>;
 
 namespace csb::utility
 {
@@ -300,6 +302,37 @@ namespace csb
     std::vector<std::filesystem::path> result(files.begin(), files.end());
     return result;
   }
+
+  template <serializable type> type read_file(const std::filesystem::path &file)
+  {
+    if (!std::filesystem::exists(file)) throw std::runtime_error("File does not exist: " + file.string());
+
+    std::ifstream input_file(file);
+    if (!input_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+
+    type container = {};
+    if constexpr (std::same_as<type, std::string>)
+      container.assign(std::istreambuf_iterator<char>(input_file), std::istreambuf_iterator<char>());
+    else if constexpr (std::same_as<type, std::vector<std::string>>)
+    {
+      std::string line;
+      while (std::getline(input_file, line)) container.push_back(line);
+    }
+    return container;
+  }
+
+  template <serializable type> void write_file(const std::filesystem::path &file, const type &container)
+  {
+    if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
+
+    std::ofstream output_file(file);
+    if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+
+    if constexpr (std::same_as<type, std::string>)
+      output_file << container;
+    else if constexpr (std::same_as<type, std::vector<std::string>>)
+      for (const auto &line : container) output_file << line << '\n';
+  }
 }
 
 enum artifact
@@ -381,6 +414,18 @@ namespace csb::utility
       }
       else
         csb::arguments.push_back(arg);
+    }
+  }
+
+  inline void setup_environment_variables()
+  {
+    auto env_content = read_file<std::vector<std::string>>(".env");
+    for (const auto &line : env_content)
+    {
+      if (line.empty() || line[0] == '#') continue;
+      size_t equal_pos = line.find('=');
+      if (equal_pos == std::string::npos) continue;
+      set_environment_variable(line.substr(0, equal_pos), line.substr(equal_pos + 1));
     }
   }
 
@@ -1314,7 +1359,8 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
-  inline void file_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &files)
+  inline void file_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &files,
+                           const std::vector<std::string> &extra_arguments = {})
   {
     if (files.empty()) throw std::runtime_error("No files to install.");
     bool all_exist = true;
@@ -1336,15 +1382,19 @@ namespace csb
     {
       auto [url, target_path] = file;
       if (std::filesystem::exists(target_path)) continue;
-      if (!std::filesystem::exists(target_path)) std::filesystem::create_directories(target_path);
+      if (!std::filesystem::exists(target_path.parent_path()))
+        std::filesystem::create_directories(target_path.parent_path());
 
-      std::string file_name = url.substr(url.find_last_of('/') + 1);
-      std::filesystem::path file_path = target_path / file_name;
+      std::string extra = {};
+      if (!extra_arguments.empty())
+        for (const auto &argument : extra_arguments) extra += argument + " ";
       utility::live_execute(
-        std::format("curl -f -L -C - -o {} {}", file_path.string(), url), [&url, &file_path](const std::string &)
-        { print<COUT>("Downloading file at '{}' to '{}'...\n", url, file_path.string()); }, nullptr,
+        std::format("curl -f -L -C - {}-o {} {}", extra, target_path.string(), url),
+        [&url, &target_path](const std::string &)
+        { print<COUT>("Downloading file at '{}' to '{}'...\n", url, target_path.string()); }, nullptr,
         [](const std::string &, const int return_code)
         { throw std::runtime_error("Failed to download file. Exited with: " + std::to_string(return_code)); });
+
       print<COUT>("done.\n");
     }
 
@@ -1352,7 +1402,8 @@ namespace csb
   }
 
   inline void archive_install(
-    const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>> &archives)
+    const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>> &archives,
+    const std::vector<std::string> &extra_arguments = {})
   {
     if (archives.empty()) throw std::runtime_error("No archives to install.");
     bool all_exist = true;
@@ -1376,11 +1427,13 @@ namespace csb
       auto [url, extract_path, target_paths] = archive;
       if (std::filesystem::exists(extract_path)) continue;
 
-      std::string archive_name = url.substr(url.find_last_of('/') + 1);
-      auto archive_path = std::filesystem::path("build") / archive_name;
+      auto archive_path = std::filesystem::path("build") / url.substr(url.find_last_of('/') + 1);
+      std::string extra = {};
+      if (!extra_arguments.empty())
+        for (const auto &argument : extra_arguments) extra += argument + " ";
       if (!std::filesystem::exists(archive_path))
         utility::live_execute(
-          std::format("curl -f -L -C - -o {} {}", archive_path.string(), url),
+          std::format("curl -f -L -C - {}-o {} {}", extra, archive_path.string(), url),
           [&url](const std::string &) { print<COUT>("Downloading archive at '{}'...\n", url); }, nullptr,
           [](const std::string &, const int return_code)
           { throw std::runtime_error("Failed to download archive. Exited with: " + std::to_string(return_code)); });
@@ -1673,7 +1726,7 @@ namespace csb
           const std::vector<std::filesystem::path> &task_outputs)
       {
         print<COUT>("Generating embedded resources into '{}' and '{}'... ", task_outputs.front().string(),
-                     task_outputs.back().string());
+                    task_outputs.back().string());
 
         auto header_content = header_start_content;
         auto source_content = source_start_content;
@@ -2183,6 +2236,7 @@ namespace csb
         throw std::runtime_error("Unsupported platform.");                                                             \
                                                                                                                        \
       csb::utility::handle_arguments(argc, argv);                                                                      \
+      csb::utility::setup_environment_variables();                                                                     \
       configure();                                                                                                     \
       if (csb::utility::current_task == CLEAN)                                                                         \
         return clean();                                                                                                \
