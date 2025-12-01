@@ -1,4 +1,4 @@
-#include "../csb.hpp" // Would just be "csb.hpp" in a real project
+#include "../csb.hpp"
 
 void configure()
 {
