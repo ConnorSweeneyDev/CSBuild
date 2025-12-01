@@ -419,7 +419,8 @@ namespace csb::utility
 
   inline void setup_environment_variables()
   {
-    auto env_content = read_file<std::vector<std::string>>(".env");
+    std::vector<std::string> env_content = {};
+    if (std::filesystem::exists(".env")) env_content = read_file<std::vector<std::string>>(".env");
     for (const auto &line : env_content)
     {
       if (line.empty() || line[0] == '#') continue;
