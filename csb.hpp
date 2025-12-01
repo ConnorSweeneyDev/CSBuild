@@ -1,10 +1,11 @@
-// CSB Version 1.6.4
+// CSB Version 1.6.5
 
 #pragma once
 
 #include <algorithm>
 #include <cctype>
 #include <concepts>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -137,7 +138,8 @@ concept iterable_path_dependency = requires(container_type &type) {
 template <typename tuple_type>
 concept is_tuple = requires { typename std::tuple_size<tuple_type>::type; };
 template <typename type>
-concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>>;
+concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
+                       std::same_as<type, std::vector<std::byte>>;
 
 namespace csb::utility
 {
@@ -307,9 +309,22 @@ namespace csb
   {
     if (!std::filesystem::exists(file)) throw std::runtime_error("File does not exist: " + file.string());
 
+    if constexpr (std::same_as<type, std::vector<std::byte>>)
+    {
+      type container = {};
+      std::ifstream input_file(file, std::ios::binary | std::ios::ate);
+      if (!input_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+      const std::streamsize size = input_file.tellg();
+      input_file.seekg(0, std::ios::beg);
+      container.resize(static_cast<size_t>(size));
+      if (!input_file.read(reinterpret_cast<char *>(container.data()), size))
+        throw std::runtime_error("Failed to read file: " + file.string());
+      input_file.close();
+      return container;
+    }
+
     std::ifstream input_file(file);
     if (!input_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
-
     type container = {};
     if constexpr (std::same_as<type, std::string>)
       container.assign(std::istreambuf_iterator<char>(input_file), std::istreambuf_iterator<char>());
@@ -318,6 +333,7 @@ namespace csb
       std::string line;
       while (std::getline(input_file, line)) container.push_back(line);
     }
+    input_file.close();
     return container;
   }
 
@@ -325,13 +341,23 @@ namespace csb
   {
     if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
 
+    if constexpr (std::same_as<type, std::vector<std::byte>>)
+    {
+      std::ofstream output_file(file, std::ios::binary);
+      if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+      if (!output_file.write(reinterpret_cast<const char *>(container.data()), container.size()))
+        throw std::runtime_error("Failed to write file: " + file.string());
+      output_file.close();
+      return;
+    }
+
     std::ofstream output_file(file);
     if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
-
     if constexpr (std::same_as<type, std::string>)
       output_file << container;
     else if constexpr (std::same_as<type, std::vector<std::string>>)
       for (const auto &line : container) output_file << line << '\n';
+    output_file.close();
   }
 }
 
@@ -1620,7 +1646,7 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
-  inline std::string unsigned_char_to_hex(unsigned char character)
+  inline std::string byte_to_hex(std::byte character)
   {
     std::stringstream ss;
     ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
@@ -1675,10 +1701,10 @@ namespace csb
       else
       {
         data_values.push_back("");
-        const std::vector<unsigned char> &file_data_vector = std::get<0>(data);
+        const std::vector<std::byte> &file_data_vector = std::get<0>(data);
         for (size_t index = 0; index < file_data_vector.size(); ++index)
         {
-          data_values[0] += unsigned_char_to_hex(file_data_vector[index]);
+          data_values[0] += byte_to_hex(file_data_vector[index]);
           if (index < file_data_vector.size() - 1)
           {
             data_values[0] += ",";
@@ -1746,15 +1772,8 @@ namespace csb
             data = data_retrieval_function(resource);
           else
           {
-            std::vector<unsigned char> &data_vector = std::get<0>(data);
-            std::ifstream resource_file(resource, std::ios::binary | std::ios::ate);
-            if (!resource_file) throw std::runtime_error("Failed to open resource file: " + resource.string() + ".");
-            std::streamsize size = resource_file.tellg();
-            data_vector.resize(static_cast<size_t>(size));
-            resource_file.seekg(0, std::ios::beg);
-            if (!resource_file.read(reinterpret_cast<char *>(data_vector.data()), size))
-              throw std::runtime_error("Failed to read resource file: " + resource.string() + ".");
-            resource_file.close();
+            std::vector<std::byte> &data_vector = std::get<0>(data);
+            data_vector = read_file<std::vector<std::byte>>(resource);
           }
 
           std::string name = {};
