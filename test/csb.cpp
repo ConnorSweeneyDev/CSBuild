@@ -27,12 +27,11 @@ int csb::clean()
 
 int csb::build()
 {
+  if (!csb::is_subproject) csb::clang_format("21.1.1");
+
   csb::vcpkg_install("2025.08.27");
-  if (!csb::is_subproject)
-  {
-    csb::clang_format("21.1.1");
-    csb::generate_compile_commands();
-  }
+
+  csb::generate_compile_commands();
   csb::compile();
   csb::link();
   return CSB_SUCCESS;

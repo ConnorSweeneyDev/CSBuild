@@ -1,4 +1,4 @@
-// CSB Version 1.6.7
+// CSB Version 1.6.8
 
 #pragma once
 
@@ -27,6 +27,7 @@
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1898,7 +1899,8 @@ namespace csb
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
 
-  inline void clang_format(const std::string &clang_version, std::vector<std::filesystem::path> exclude_files = {})
+  inline void clang_format(const std::string &clang_version, std::vector<std::filesystem::path> overrides = {},
+                           std::vector<std::filesystem::path> excludes = {})
   {
     if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
@@ -1906,14 +1908,18 @@ namespace csb
     auto format_directory = std::filesystem::path("build") / "format";
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
     std::vector<std::filesystem::path> format_files = {};
-    format_files.reserve(source_files.size() + include_files.size());
+    format_files.reserve(source_files.size() + include_files.size() + overrides.size() + 1);
     format_files.insert(format_files.end(), source_files.begin(), source_files.end());
     format_files.insert(format_files.end(), include_files.begin(), include_files.end());
-    if (!exclude_files.empty())
+    format_files.insert(format_files.end(), overrides.begin(), overrides.end());
+    format_files.push_back("csb.cpp");
+    if (!excludes.empty())
       format_files.erase(
         std::remove_if(format_files.begin(), format_files.end(), [&](const std::filesystem::path &path)
-                       { return std::find(exclude_files.begin(), exclude_files.end(), path) != exclude_files.end(); }),
+                       { return std::find(excludes.begin(), excludes.end(), path) != excludes.end(); }),
         format_files.end());
+    std::sort(format_files.begin(), format_files.end());
+    format_files.erase(std::unique(format_files.begin(), format_files.end()), format_files.end());
     auto clang_path = utility::bootstrap_clang(clang_version);
     auto clang_format_path = clang_path / (host_platform == WINDOWS ? "clang-format.exe" : "clang-format");
 
