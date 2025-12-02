@@ -1,4 +1,4 @@
-// CSB Version 1.6.6
+// CSB Version 1.6.7
 
 #pragma once
 
@@ -141,6 +141,13 @@ template <typename type>
 concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
                        std::same_as<type, std::vector<std::byte>>;
 
+enum print_stream
+{
+  COUT,
+  CERR,
+  CLOG
+};
+
 namespace csb::utility
 {
   inline std::mutex output_mutex = {};
@@ -158,13 +165,6 @@ namespace csb
   int clean();
   int build();
   int run();
-
-  enum print_stream
-  {
-    COUT,
-    CERR,
-    CLOG
-  };
 
   inline std::vector<std::string> arguments = {};
   inline bool is_subproject = {};
@@ -203,23 +203,19 @@ namespace csb
   {
     std::lock_guard<std::mutex> lock(utility::output_mutex);
     auto formatted_message = std::format(message, std::forward<message_arguments>(args)...);
-    if constexpr (stream == COUT)
+    std::ostream &choice = []() -> std::ostream &
     {
-      std::cout << formatted_message;
-      std::cout.flush();
-    }
-    else if constexpr (stream == CERR)
-    {
-      std::cerr << formatted_message;
-      std::cerr.flush();
-    }
-    else if constexpr (stream == CLOG)
-    {
-      std::clog << formatted_message;
-      std::clog.flush();
-    }
-    else
-      throw std::runtime_error("Invalid print stream specification");
+      if constexpr (stream == COUT)
+        return std::cout;
+      else if constexpr (stream == CERR)
+        return std::cerr;
+      else if constexpr (stream == CLOG)
+        return std::clog;
+      else
+        throw exception("Invalid print stream specification");
+    }();
+    choice << formatted_message;
+    choice.flush();
   }
 
   inline void touch(const std::filesystem::path &path)
@@ -812,7 +808,7 @@ namespace csb::utility
         }
         catch (const std::exception &error)
         {
-          std::cerr << error.what() << std::endl;
+          print<CERR>("{}\n", error.what());
         }
       throw std::runtime_error("Tasks failed.");
       return;
@@ -951,7 +947,7 @@ namespace csb::utility
       },
       [](const std::string &, const int return_code, const std::string &output)
       {
-        std::cerr << output << std::endl;
+        print<CERR>("{}\n", output);
         throw std::runtime_error("Failed to get vcpkg current version. Return code: " + std::to_string(return_code));
       });
     std::string target_hash = {};
@@ -964,7 +960,7 @@ namespace csb::utility
       },
       [](const std::string &, const int return_code, const std::string &output)
       {
-        std::cerr << output << std::endl;
+        print<CERR>("{}\n", output);
         throw std::runtime_error("Failed to get vcpkg target version. Return code: " + std::to_string(return_code));
       });
     if (current_hash != target_hash)
@@ -999,7 +995,7 @@ namespace csb::utility
       },
       [](const std::string &, const int return_code, const std::string &output)
       {
-        std::cerr << output << std::endl;
+        print<CERR>("{}\n", output);
         throw std::runtime_error("Failed to bootstrap vcpkg. Return code: " + std::to_string(return_code));
       });
 
@@ -1546,7 +1542,7 @@ namespace csb
         },
         [](const std::string &, const int return_code, const std::string &output)
         {
-          std::cerr << output << std::endl;
+          print<CERR>("{}\n", output);
           throw std::runtime_error("Failed to get subproject current version. Return code: " +
                                    std::to_string(return_code));
         });
@@ -1560,7 +1556,7 @@ namespace csb
         },
         [](const std::string &, const int return_code, const std::string &output)
         {
-          std::cerr << output << std::endl;
+          print<CERR>("{}\n", output);
           throw std::runtime_error("Failed to get subproject target version. Return code: " +
                                    std::to_string(return_code));
         });
@@ -2252,11 +2248,11 @@ namespace csb
         const std::string vs_path = csb::utility::strict_get_env("VSINSTALLDIR", error_message);                       \
         const std::string toolset_version = csb::utility::strict_get_env("VCToolsVersion", error_message);             \
         const std::string sdk_version = csb::utility::strict_get_env("WindowsSDKVersion", error_message);              \
-        csb::print<csb::COUT>("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n",                   \
-                              csb::host_architecture, vs_path, toolset_version, sdk_version);                          \
+        csb::print<COUT>("Architecture: {}\nVisual Studio: {}\nToolset: {}\nWindows SDK: {}\n",                        \
+                         csb::host_architecture, vs_path, toolset_version, sdk_version);                               \
       }                                                                                                                \
       else if (csb::host_platform == LINUX)                                                                            \
-        csb::print<csb::COUT>("Architecture: {}\n", csb::host_architecture);                                           \
+        csb::print<COUT>("Architecture: {}\n", csb::host_architecture);                                                \
       else                                                                                                             \
         throw std::runtime_error("Unsupported platform.");                                                             \
                                                                                                                        \
@@ -2274,7 +2270,7 @@ namespace csb
     }                                                                                                                  \
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
-      csb::print<csb::CERR>("{}\n", exception.what());                                                                 \
+      csb::print<CERR>("{}\n", exception.what());                                                                      \
       return CSB_FAILURE;                                                                                              \
     }                                                                                                                  \
   }
