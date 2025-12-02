@@ -1,6 +1,6 @@
 #include "../csb.hpp"
 
-void configure()
+void csb::configure()
 {
   csb::target_name = "test";
   csb::target_artifact = EXECUTABLE;
@@ -19,13 +19,13 @@ void configure()
     csb::libraries = {"c", "m", "pthread", "dl", "SDL3"};
 }
 
-int clean()
+int csb::clean()
 {
   csb::clean_build_directory();
   return CSB_SUCCESS;
 }
 
-int build()
+int csb::build()
 {
   csb::vcpkg_install("2025.08.27");
   if (!csb::is_subproject)
@@ -38,7 +38,7 @@ int build()
   return CSB_SUCCESS;
 }
 
-int run()
+int csb::run()
 {
   csb::run_target();
   return CSB_SUCCESS;

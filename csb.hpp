@@ -1,4 +1,4 @@
-// CSB Version 1.6.5
+// CSB Version 1.6.6
 
 #pragma once
 
@@ -154,6 +154,11 @@ namespace csb::utility
 
 namespace csb
 {
+  void configure();
+  int clean();
+  int build();
+  int run();
+
   enum print_stream
   {
     COUT,
@@ -2220,15 +2225,15 @@ namespace csb
       std::format("{}{}", executable_path.string(),
                   target_arguments_string.empty() ? "" : " " + target_arguments_string),
       [](const std::string &real_command)
-      { print<COUT>("Running: {}\n\n{}\n", real_command, utility::small_section_divider); },
+      { print<COUT>("\nRunning: {}\n{}\n", real_command, utility::small_section_divider); },
       [](const std::string &)
       {
-        print<COUT>("{}{}\n\nProcess exited successfully.\n", utility::last_live_execute_character == "\n" ? "" : "\n",
+        print<COUT>("{}{}\nProcess exited successfully.\n", utility::last_live_execute_character == "\n" ? "" : "\n",
                     utility::small_section_divider);
       },
       [](const std::string &, const int return_code)
       {
-        print<COUT>("{}{}\n\nProcess exited with code {}.\n", utility::last_live_execute_character == "\n" ? "" : "\n",
+        print<COUT>("{}{}\nProcess exited with code {}.\n", utility::last_live_execute_character == "\n" ? "" : "\n",
                     utility::small_section_divider, return_code);
       });
   }
@@ -2257,13 +2262,13 @@ namespace csb
                                                                                                                        \
       csb::utility::handle_arguments(argc, argv);                                                                      \
       csb::utility::setup_environment_variables();                                                                     \
-      configure();                                                                                                     \
+      csb::configure();                                                                                                \
       if (csb::utility::current_task == CLEAN)                                                                         \
-        return clean();                                                                                                \
+        return csb::clean();                                                                                           \
       else if (csb::utility::current_task == BUILD)                                                                    \
-        return build();                                                                                                \
+        return csb::build();                                                                                           \
       else if (csb::utility::current_task == RUN)                                                                      \
-        return run();                                                                                                  \
+        return csb::run();                                                                                             \
       else                                                                                                             \
         throw std::runtime_error("No task specified.");                                                                \
     }                                                                                                                  \
