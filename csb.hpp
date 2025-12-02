@@ -212,7 +212,7 @@ namespace csb
       else if constexpr (stream == CLOG)
         return std::clog;
       else
-        throw exception("Invalid print stream specification");
+        throw std::runtime_error("Invalid print stream specification");
     }();
     choice << formatted_message;
     choice.flush();
