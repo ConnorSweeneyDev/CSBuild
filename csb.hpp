@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.8.0
+// CSB 1.8.1
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35318,21 +35318,14 @@ namespace csb
    *
    * See also: `file_install`, `archive_install`, `subproject_install`.
    */
-  inline void vcpkg_install(const std::string &vcpkg_version,
-                            const std::variant<nlohmann::json, std::function<nlohmann::json()>> &manifest)
+  inline void vcpkg_install(const std::string &vcpkg_version, const nlohmann::json &manifest)
   {
     if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
     print<COUT>("\n{}\n", utility::small_section_divider);
 
     auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
 
-    nlohmann::json manifest_json = {};
-    if (std::holds_alternative<nlohmann::json>(manifest))
-      manifest_json = std::get<nlohmann::json>(manifest);
-    else
-      manifest_json = std::get<std::function<nlohmann::json()>>(manifest)();
-    write_file(vcpkg_path.parent_path() / "vcpkg.json", manifest_json);
-
+    write_file(vcpkg_path.parent_path() / "vcpkg.json", manifest);
     std::string vcpkg_triplet = {};
     if (host_platform == WINDOWS)
       vcpkg_triplet = std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
@@ -35356,6 +35349,20 @@ namespace csb
     if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
 
     print<COUT>("{}\n", utility::small_section_divider);
+  }
+  /**
+   * Installs vcpkg packages using an optional version anchor.
+   *
+   * This function's parameters behave as follows:
+   * | `vcpkg_version`: Specifies the vcpkg version (tag) to use. If empty, the latest version is used. The
+   *                    external_include_directories and library_directories are automatically updated.
+   * | `manifest`: A JSON object, or function that returns a JSON object, representing the vcpkg manifest file.
+   *
+   * See also: `file_install`, `archive_install`, `subproject_install`.
+   */
+  inline void vcpkg_install(const std::string &vcpkg_version, const std::function<nlohmann::json()> &manifest)
+  {
+    vcpkg_install(vcpkg_version, manifest());
   }
 
   /**
