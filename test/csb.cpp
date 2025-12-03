@@ -9,14 +9,12 @@ void csb::configure()
   csb::target_configuration = RELEASE;
   csb::cxx_standard = CXX20;
   csb::warning_level = W4;
-  csb::definitions = {"STB_IMAGE_IMPLEMENTATION"};
   csb::include_files = csb::files_from({"program/include"});
   csb::source_files = csb::files_from({"program/source"});
   if (csb::host_platform == WINDOWS)
-    csb::libraries = {"kernel32", "user32",  "shell32", "gdi32",    "imm32",    "comdlg32", "ole32",   "oleaut32",
-                      "advapi32", "dinput8", "winmm",   "winspool", "setupapi", "uuid",     "version", "SDL3-static"};
+    csb::libraries = {"kernel32"};
   else if (csb::host_platform == LINUX)
-    csb::libraries = {"c", "m", "pthread", "dl", "SDL3"};
+    csb::libraries = {"c"};
 }
 
 int csb::clean()
@@ -27,10 +25,6 @@ int csb::clean()
 
 int csb::build()
 {
-  if (!csb::is_subproject) csb::clang_format("21.1.1");
-
-  csb::vcpkg_install("2025.08.27");
-
   csb::generate_compile_commands();
   csb::compile();
   csb::link();

@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB Version 1.7.1
+// CSB 1.8.0
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33448,8 +33448,8 @@ namespace csb
     inline const std::string small_section_divider = "-----------------------------------------------------------------"
                                                      "-------------------------------------------------------";
 
-    template <typename container_type>
-    concept iterable_string = requires(container_type &type) {
+    template <typename container>
+    concept iterable_string = requires(container &type) {
       std::begin(type);
       std::end(type);
       requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::string> ||
@@ -33457,8 +33457,8 @@ namespace csb
                    { elem.string() } -> std::convertible_to<std::string>;
                  };
     };
-    template <typename container_type>
-    concept iterable_path_dependency = requires(container_type &type) {
+    template <typename container>
+    concept iterable_path_dependency = requires(container &type) {
       std::end(type);
       std::begin(type);
       requires std::same_as<std::remove_cvref_t<decltype(*std::begin(type))>, std::filesystem::path> ||
@@ -33466,30 +33466,136 @@ namespace csb
                               std::pair<const std::filesystem::path, std::vector<std::filesystem::path>>>;
     };
     template <typename tuple_type>
-    concept is_tuple = requires { typename std::tuple_size<tuple_type>::type; };
+    concept tuple = requires { typename std::tuple_size<tuple_type>::type; };
     template <typename type>
     concept serializable =
       std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
       std::same_as<type, std::vector<std::byte>> || std::same_as<type, image> || std::same_as<type, nlohmann::json>;
+    template <typename mod, typename data_type>
+    concept modifier = requires(mod modify, const data_type &value) {
+      { modify(value) } -> std::convertible_to<data_type>;
+    };
+    template <typename type, typename... vectors>
+    concept same_vectors = (std::same_as<std::remove_cvref_t<vectors>, std::vector<type>> && ...);
   }
 
+  /**
+   * Runs every time csb is executed, before whatever main action is specified on the command line.
+   *
+   * This function should be used to set up the following variables:
+   * | `target_name`: The name of the target.
+   * | `target_artifact`: The artifact type of the target (executable, library, etc.).
+   * | `target_linkage`: The linkage type of the target (static or dynamic).
+   * | `target_subsystem`: The target subsystem of the target (console, windows, etc.) - Only affects Windows.
+   * | `target_configuration`: The build configuration to use (Debug, Release, etc.).
+   * | `cxx_standard`: The C++ standard to use (Availability starting at 11 up to the latest STABLE standard).
+   * | `warning_level`: The warning level to use (0-4).
+   * | `source_files`: A list of the target's source files.
+   * | `include_files`: A list of the target's include files.
+   * | `external_include_directories`: A list of the target's external include directories.
+   * | `library_directories`: A list of the target's library directories.
+   * | `libraries`: A list of libraries to link against.
+   * | `definitions`: A list of preprocessor definitions to apply to every source file.
+   *
+   * Useful variables for all functions include:
+   * | `arguments`: A list of command line arguments not recognized by csb.
+   * | `host_platform`: The platform csb has detected.
+   * | `host_architecture`: The architecture csb has detected.
+   * | `is_subproject`: A boolean indicating whether the current project is a subproject of another csb project.
+   *
+   * Useful functions for all functions include:
+   * | `files_from`: Gets a list of files from a specified directory with optional filtering and recursion.
+   * | `unpack`: Converts a list of paths to a space-separated string.
+   * | `combine`: Combines multiple lists into one, removing duplicates and preserving order.
+   * | `remove_trailing_and_leading_newlines`: Removes trailing and leading newlines from a specified string.
+   * | `print`: Prints a formatted message to a specified output stream (cout, cerr, clog).
+   * | `get_environment_variable`: Returns the value of a specified environment variable.
+   * | `set_environment_variable`: Sets the value of a specified environment variable.
+   * | `append_environment_variable`: Appends a value to a specified environment variable.
+   * | `prepend_environment_variable`: Prepends a value to a specified environment variable.
+   * | `byte_to_hex`: Converts a byte to its hexadecimal string representation.
+   * | `read_file`: Reads the contents of a specified file as a specified format.
+   * | `write_file`: Writes data to a specified file in a specified format.
+   * | `modify_file`: Modifies the content of a specified file using a specified modifier function.
+   * | `touch`: Updates the last modified time of a specified file or creates it if it does not exist.
+   *
+   * See also: `clean` | `build` | `run`
+   */
   void configure();
+
+  /**
+   * Runs when the `clean` action is specified on the command line.
+   *
+   * Common uses for this function are to call the following functions:
+   * | `clean_build_directory`: Removes everything in the build directory except optional ignore files.
+   * | `remove_files`: Removes all specified files.
+   *
+   * See also: `configure`, `build`, `run`.
+   */
   int clean();
+
+  /**
+   * Runs when the `build` action is specified on the command line.
+   *
+   * Common uses for this function are to call the following functions:
+   * | `compile`: Compiles all source files into object files.
+   * | `link`: Links all object files into the target artifact.
+   * | `generate_compile_commands`: Generates a compile_commands.json file for LSP support.
+   * | `clang_format`: Formats all source and header files, with an optional version anchor, overrides and excludes.
+   * | `subproject_install`: Installs all specified csb subprojects.
+   * | `vcpkg_install`: Installs all specified vcpkg packages with an optional version anchor.
+   * | `archive_install`: Installs all specified archives to a specified directory.
+   * | `file_install`: Installs all specified files to a specified directory.
+   * | `embed`: Provides an interface for embedding data into a compilation unit for use in the target.
+   * | `task_run`: Runs a specified task with a custom dependency language.
+   * | `multi_task_run`: Runs multiple specified tasks with a custom dependency language.
+   * | `live_task_run`: Runs a specified task with a custom dependnecy language and streams it as it runs.
+   *
+   * See also: `configure`, `clean`, `run`.
+   */
   int build();
+
+  /**
+   * Runs when the `run` action is specified on the command line.
+   *
+   * Common uses for this function are to call the following functions:
+   * | `run_target`: Runs the target with optional command line arguments.
+   *
+   * See also: `configure`, `clean`, `build`.
+   */
   int run();
 
+  // A list of command line arguments not recognized by csb itself.
   inline std::vector<std::string> arguments = {};
-  inline bool is_subproject = {};
+  // The current platform csb has detected.
   inline platform host_platform = PLATFORM;
+  // The current architecture csb has detected.
   inline std::string host_architecture = ARCHITECTURE;
+  // A boolean indicating whether the current project is a subproject of another csb project.
+  inline bool is_subproject = {};
 
+  /**
+   * Returns the value of a specified environment variable.
+   *
+   * See also: `set_environment_variable`, `append_environment_variable`, `prepend_environment_variable`.
+   */
   inline std::string get_environment_variable(const std::string &name)
   {
     return get_env(name, "Failed to get environment variable: " + name + ".");
   }
 
+  /**
+   * Sets the value of a specified environment variable.
+   *
+   * See also: `get_environment_variable`, `append_environment_variable`, `prepend_environment_variable`.
+   */
   inline void set_environment_variable(const std::string &name, const std::string &value) { set_env(name, value); }
 
+  /**
+   * Appends a value to a specified environment variable.
+   *
+   * See also: `get_environment_variable`, `set_environment_variable`, `prepend_environment_variable`.
+   */
   inline void append_environment_variable(const std::string &name, const std::string &value)
   {
     std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
@@ -33500,6 +33606,11 @@ namespace csb
     set_env(name, current_value);
   }
 
+  /**
+   * Prepends a value to a specified environment variable.
+   *
+   * See also: `get_environment_variable`, `set_environment_variable`, `append_environment_variable`.
+   */
   inline void prepend_environment_variable(const std::string &name, const std::string &value)
   {
     std::string current_value = get_env(name, "Failed to get environment variable: " + name + ".");
@@ -33510,6 +33621,12 @@ namespace csb
     set_env(name, current_value);
   }
 
+  /**
+   * Prints a formatted message to a specified output stream (cout, cerr, clog).
+   *
+   * This function can be used from multiple threads and processes, granted that it is in conjunction within the scope
+   * of csb's multi-threaded functions.
+   */
   template <print_stream stream, typename... message_arguments>
   inline void print(std::format_string<message_arguments...> message, message_arguments &&...args)
   {
@@ -33530,6 +33647,7 @@ namespace csb
     choice.flush();
   }
 
+  // Updates the last modified time of a specified file or creates it if it does not exist.
   inline void touch(const std::filesystem::path &path)
   {
     if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
@@ -33544,6 +33662,15 @@ namespace csb
     }
   }
 
+  // Converts a byte to its hexadecimal string representation.
+  inline std::string byte_to_hex(std::byte character)
+  {
+    std::stringstream ss;
+    ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
+    return ss.str();
+  };
+
+  // Removes trailing and leading newlines from a specified string.
   inline std::string remove_trailing_and_leading_newlines(const std::string &input)
   {
     size_t start = input.find_first_not_of('\n');
@@ -33554,10 +33681,11 @@ namespace csb
       return input.substr(start, end - start + 1);
   }
 
-  template <utility::iterable_string container_type> std::string unpack(const container_type &container)
+  // Converts a list of paths to a space-separated string.
+  template <utility::iterable_string container> std::string unpack(const container &items)
   {
     std::string result = {};
-    for (const auto &item : container)
+    for (const auto &item : items)
     {
       if constexpr (std::same_as<std::remove_cvref_t<decltype(item)>, std::string>)
         result += item + " ";
@@ -33568,6 +33696,37 @@ namespace csb
     return result;
   }
 
+  template <typename type, typename... vectors>
+    requires utility::same_vectors<type, vectors...>
+  std::vector<type> combine(const std::vector<type> &first, const vectors &...rest)
+  {
+    std::vector<type> result;
+    std::unordered_set<type> seen;
+
+    auto process = [&](const std::vector<type> &vec)
+    {
+      for (const auto &element : vec)
+      {
+        if (seen.insert(element).second) { result.push_back(element); }
+      }
+    };
+
+    process(first);
+    (..., process(rest));
+
+    return result;
+  }
+
+  /**
+   * Gets a list of files from a specified directory with optional filtering and recursion.
+   *
+   * This functions parameters behave as follows:
+   * | `directories`: A list of directories to search for files in.
+   * | `extensions`: An optional list of file extensions to filter by.
+   * | `overrides`: An optional list of files to always include in the result.
+   * | `excludes`: An optional list of files to always exclude from the result.
+   * | `recursive`: A true by default boolean indicating whether the directory search is recursive.
+   */
   inline std::vector<std::filesystem::path> files_from(const std::vector<std::filesystem::path> &directories,
                                                        const std::vector<std::string> &extensions = {},
                                                        const std::vector<std::filesystem::path> &overrides = {},
@@ -33618,6 +33777,18 @@ namespace csb
     return result;
   }
 
+  /**
+   * Reads the contents of a specified file as a specified format.
+   *
+   * This function supports the following types:
+   * | `std::string`: Reads the file into a single string.
+   * | `std::vector<std::string>`: Reads the file into a list of strings, one per line.
+   * | `std::vector<std::byte>`: Reads the file into a byte array.
+   * | `image`: Reads the file as an image using stb_image - returns data, width, height and channels.
+   * | `nlohmann::json`: Reads the file as a JSON object.
+   *
+   * See also: `write_file`, `modify_file`.
+   */
   template <utility::serializable type> type read_file(const std::filesystem::path &file)
   {
     if (!std::filesystem::exists(file)) throw std::runtime_error("File does not exist: " + file.string());
@@ -33646,14 +33817,6 @@ namespace csb
       stbi_image_free(data);
       return result;
     }
-    else if constexpr (std::same_as<type, nlohmann::json>)
-    {
-      std::ifstream input_file(file);
-      if (!input_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
-      nlohmann::json container = nlohmann::json::parse(input_file);
-      input_file.close();
-      return container;
-    }
 
     std::ifstream input_file(file);
     if (!input_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
@@ -33665,10 +33828,24 @@ namespace csb
       std::string line;
       while (std::getline(input_file, line)) container.push_back(line);
     }
+    else if constexpr (std::same_as<type, nlohmann::json>)
+      container = nlohmann::json::parse(input_file);
     input_file.close();
     return container;
   }
 
+  /**
+   * Writes data to a specified file in a specified format.
+   *
+   * This function supports the following types:
+   * | `std::string`: Writes the string to the file.
+   * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
+   * | `std::vector<std::byte>`: Writes the byte array to the file.
+   * | `image`: Writing images is not supported.
+   * | `nlohmann::json`: Writes the JSON object to the file.
+   *
+   * See also: `read_file`, `modify_file`.
+   */
   template <utility::serializable type> void write_file(const std::filesystem::path &file, const type &container)
   {
     if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
@@ -33684,14 +33861,6 @@ namespace csb
     }
     else if constexpr (std::same_as<type, image>)
       throw std::runtime_error("Writing images is not supported.");
-    else if constexpr (std::same_as<type, nlohmann::json>)
-    {
-      std::ofstream output_file(file);
-      if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
-      output_file << container.dump(2);
-      output_file.close();
-      return;
-    }
 
     std::ofstream output_file(file);
     if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
@@ -33699,7 +33868,34 @@ namespace csb
       output_file << container;
     else if constexpr (std::same_as<type, std::vector<std::string>>)
       for (const auto &line : container) output_file << line << '\n';
+    else if constexpr (std::same_as<type, nlohmann::json>)
+      output_file << container.dump(2);
     output_file.close();
+  }
+
+  /**
+   * Modifies the content of a specified file using a specified modifier function.
+   *
+   * The `modify` parameter should be a function that takes a single parameter of the specified type which will
+   * contain the current content of the file, and return the modified content of the same type.
+   *
+   * This function supports the following types:
+   * | `std::string`: Writes the string to the file.
+   * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
+   * | `std::vector<std::byte>`: Writes the byte array to the file.
+   * | `image`: Modifying images is not supported.
+   * | `nlohmann::json`: Writes the JSON object to the file.
+   *
+   * See also: `read_file`, `write_file`.
+   */
+  template <utility::serializable type, utility::modifier<type> modifier>
+  void modify_file(const std::filesystem::path &file, modifier modify)
+  {
+    if constexpr (std::same_as<type, image>) throw std::runtime_error("Modifying images is not supported.");
+
+    type container = read_file<type>(file);
+    container = modify(container);
+    write_file<type>(file, container);
   }
 }
 
@@ -33781,7 +33977,7 @@ namespace csb::utility
         is_subproject = true;
       }
       else
-        csb::arguments.push_back(arg);
+        arguments.push_back(arg);
     }
   }
 
@@ -33805,6 +34001,62 @@ namespace csb::utility
     return result;
   }
 
+  /**
+   * READ THIS TO UNDERSTAND THE CUSTOM PLACEHOLDER SYNTAX USED IN TASK FUNCTIONS.
+   * THIS FUNCTION IS NOT FOR DIRECT USE.
+   *
+   * Replaces path selection placeholders in a given command with actual paths from provided lists. If at least one list
+   * is provided to a task function, you can use "()" as the placeholder. Inside the parentheses, you can specify
+   * selections and methods to filter and modify what will be substituted in place of the placeholder. If two paths are
+   * supplied to a task function, you can use "()" for the first list and "[]" for the second list. If you want to write
+   * literal parentheses or brackets, you can escape them with themselves (e.g., "((" or "[["). Additionally, when two
+   * paths are provided, you can use placeholders within the second list "()" to refer to the first list's paths.
+   *
+   * `task_run` and `live_task_run` support the following selection keywords:
+   * | `FIRST`: Selects the first path from the list.
+   * | `LAST`: Selects the last path from the list.
+   * | `SINGLE.n`: Selects the nth path from the list (1-based index).
+   * | `RANGE.n.m`: Selects paths from the nth to the mth (inclusive) from the list (1-based index).
+   * | `EXCEPT.n`: Excludes the nth selected path from the current selection (1-based index).
+   *
+   * `multi_task_run` supports the same selection keywords, but applies them to each task's path list individually. To
+   * change this behavior, you can choose to substitute from the full list of paths by using the following keyword:
+   * | `ALL`: Selects all paths from the whole list, not just the current task's list.
+   *
+   * The following methods can be applied to the selected paths in all task functions:
+   * | `filename`: Returns path.filename().
+   * | `stem`: Returns path.stem().
+   * | `extension`: Returns path.extension().
+   * | `parent_path`: Returns path.parent_path() if it exists; otherwise, returns path.
+   * | `lexically_normal`: Returns path.lexically_normal().
+   * | `absolute`: Returns std::filesystem::absolute(path).
+   * | `relative`: Returns std::filesystem::relative(path).
+   * | `canonical`: Returns std::filesystem::canonical(path).
+   * | `quoted`: Returns the path surrounded by double quotes.
+   *
+   * All selections and methods can be chained together in any order, separated by dots; the only rule is that
+   * selections must come before methods.
+   *
+   * With the knowledge above, you should be able to understand the following example that uses a lot of the features:
+   *
+   * csb::multi_task_run(
+   *   [](const auto &file, const auto &, const auto &)
+   *   {
+   *     return std::format("dxc -spirv -T {}_6_0 -E main (absolute.quoted) -Fo []",
+   *                        file.extension() == ".vert" ? "vs" : "ps");
+   *   },
+   *   csb::files_from({"program/shader"}), {"build/shader/(filename).spv"});
+   *
+   * As you can see, std::format replaces "{}" with the shader type based on the file extension. Then, the first
+   * placeholder "()" selects the current file from the target_files list (could have specified ALL to select every file
+   * from the full list) and converts it to absolute and quoted. Then, the placeholder (filename) in the check_files
+   * list uses that file to generate the path to the output spv file. Then the final placeholder "[]" selects that
+   * output from that target's list of check_files. There was only one check file, but if there were multiple you could
+   * use "[FIRST]", "[SINGLE.2]", "[RANGE.1.3]", etc. to select the one you want. Using "[ALL]" would choose every
+   * single target file's check files.
+   *
+   * See also: `task_run`, `live_task_run`, `multi_task_run`.
+   */
   inline std::string placeholder_path_replace(
     const std::string &placeholder,
     const std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>> &paths,
@@ -34020,24 +34272,26 @@ namespace csb::utility
     if (on_success) on_success(real_command, output);
   }
 
-  template <iterable_path_dependency container_type> void multi_execute(
-    const std::variant<
-      std::string, std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                                             const std::vector<std::filesystem::path> &)>> &command,
-    const container_type &container,
-    const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                             const std::string &)> &on_start = nullptr,
-    const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                             const std::string &, const std::string &)> &on_success = nullptr,
-    const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                             const std::string &, const int, const std::string &)> &on_failure = nullptr)
+  template <iterable_path_dependency container> void
+  multi_execute(const std::variant<
+                  std::string,
+                  std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>,
+                  std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
+                                            const std::vector<std::filesystem::path> &)>> &command,
+                const container &items,
+                const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
+                                         const std::string &)> &on_start = nullptr,
+                const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
+                                         const std::string &, const std::string &)> &on_success = nullptr,
+                const std::function<void(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
+                                         const std::string &, const int, const std::string &)> &on_failure = nullptr)
   {
     std::vector<std::filesystem::path> all_items = {};
     std::vector<std::filesystem::path> all_dependencies = {};
-    if constexpr (std::same_as<std::remove_cvref_t<container_type>, std::vector<std::filesystem::path>>)
-      all_items = std::vector<std::filesystem::path>(container.begin(), container.end());
+    if constexpr (std::same_as<std::remove_cvref_t<container>, std::vector<std::filesystem::path>>)
+      all_items = std::vector<std::filesystem::path>(items.begin(), items.end());
     else
-      for (const auto &item : container)
+      for (const auto &item : items)
       {
         all_items.push_back(item.first);
         for (const auto &dependency : item.second)
@@ -34048,7 +34302,7 @@ namespace csb::utility
     std::vector<std::exception_ptr> exceptions = {};
     std::mutex exceptions_mutex = {};
     std::for_each(
-      std::execution::par, container.begin(), container.end(),
+      std::execution::par, items.begin(), items.end(),
       [&](const auto &item)
       {
         std::filesystem::path item_path = {};
@@ -34064,6 +34318,11 @@ namespace csb::utility
         std::string real_command = {};
         if (std::holds_alternative<std::string>(command))
           real_command = std::get<std::string>(command);
+        else if (std::holds_alternative<std::function<std::string(
+                   const std::filesystem::path &, const std::vector<std::filesystem::path> &)>>(command))
+          real_command = std::get<
+            std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>>(
+            command)(item_path, all_items);
         else if (std::holds_alternative<
                    std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
                                              const std::vector<std::filesystem::path> &)>>(command))
@@ -34263,11 +34522,12 @@ namespace csb::utility
     return modified_files;
   }
 
-  inline std::filesystem::path bootstrap_vcpkg(const std::string &vcpkg_version)
+  inline std::filesystem::path bootstrap_vcpkg(std::string vcpkg_version)
   {
     bool needs_bootstrap = false;
 
-    auto vcpkg_path = std::filesystem::path("build") / std::format("vcpkg-{}", vcpkg_version) /
+    auto vcpkg_path = std::filesystem::path("build") /
+                      std::format("vcpkg-{}", vcpkg_version.empty() ? "latest" : vcpkg_version) /
                       (host_platform == WINDOWS ? "vcpkg.exe" : "vcpkg");
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
@@ -34291,6 +34551,27 @@ namespace csb::utility
         print<CERR>("{}\n", output);
         throw std::runtime_error("Failed to get vcpkg current version. Return code: " + std::to_string(return_code));
       });
+    if (vcpkg_version.empty())
+    {
+      execute(std::format("cd {} && git fetch --tags", vcpkg_path.parent_path().string()), nullptr, nullptr,
+              [](const std::string &, const int return_code, const std::string &output)
+              {
+                print<CERR>("{}\n", output);
+                throw std::runtime_error("Failed to fetch vcpkg tags. Return code: " + std::to_string(return_code));
+              });
+      execute(
+        std::format("cd {} && git describe --tags --abbrev=0", vcpkg_path.parent_path().string()), nullptr,
+        [&](const std::string &, const std::string &output)
+        {
+          vcpkg_version = output;
+          vcpkg_version.erase(std::remove(vcpkg_version.begin(), vcpkg_version.end(), '\n'), vcpkg_version.end());
+        },
+        [](const std::string &, const int return_code, const std::string &output)
+        {
+          print<CERR>("{}\n", output);
+          throw std::runtime_error("Failed to get latest vcpkg tag. Return code: " + std::to_string(return_code));
+        });
+    }
     std::string target_hash = {};
     execute(
       std::format("cd {} && git rev-parse {}", vcpkg_path.parent_path().string(), vcpkg_version), nullptr,
@@ -34320,7 +34601,7 @@ namespace csb::utility
       print<COUT>("Using vcpkg version: {}\n", vcpkg_version);
       return vcpkg_path;
     }
-    utility::execute(
+    execute(
       std::format("cd {} && {}bootstrap-vcpkg.{} -disableMetrics", vcpkg_path.parent_path().string(),
                   host_platform == WINDOWS ? "" : "./", host_platform == WINDOWS ? "bat" : "sh"),
       [](const std::string &) { print<COUT>("Bootstrapping vcpkg... "); },
@@ -34344,10 +34625,58 @@ namespace csb::utility
     return vcpkg_path;
   }
 
-  inline std::filesystem::path bootstrap_clang(const std::string &clang_version)
+  inline std::filesystem::path bootstrap_clang(std::string clang_version)
   {
-    auto clang_path = std::filesystem::path("build") / std::format("clang-{}", clang_version);
-    if (std::filesystem::exists(clang_path)) return clang_path;
+    auto clang_path =
+      std::filesystem::path("build") / std::format("clang-{}", clang_version.empty() ? "latest" : clang_version);
+    if (clang_version.empty())
+    {
+      std::string current_version = {};
+      if (std::filesystem::exists(clang_path))
+      {
+        execute(
+          std::format("{}{} --version", host_platform == LINUX ? "./" : "",
+                      (clang_path / (host_platform == WINDOWS ? "clang.exe" : "clang")).string()),
+          nullptr,
+          [&](const std::string &, const std::string &output)
+          {
+            size_t pos = output.find("version ");
+            if (pos != std::string::npos)
+            {
+              size_t end_pos = output.find_first_of(" \n", pos + 8);
+              current_version = output.substr(pos + 8, end_pos - (pos + 8));
+            }
+          },
+          [](const std::string &, const int return_code, const std::string &output)
+          {
+            print<CERR>("{}\n", output);
+            throw std::runtime_error("Failed to get current Clang version. Return code: " +
+                                     std::to_string(return_code));
+          });
+      }
+      std::string latest_version = {};
+      execute(
+        "curl -s https://api.github.com/repos/llvm/llvm-project/releases/latest", nullptr,
+        [&](const std::string &, const std::string &output)
+        {
+          auto json = nlohmann::json::parse(output);
+          std::string tag = json["tag_name"];
+          latest_version = tag.substr(8);
+        },
+        [](const std::string &, const int return_code, const std::string &output)
+        {
+          print<CERR>("{}\n", output);
+          throw std::runtime_error("Failed to get latest Clang version. Return code: " + std::to_string(return_code));
+        });
+      if (std::filesystem::exists(clang_path))
+      {
+        if (current_version == latest_version) return clang_path;
+        std::filesystem::remove_all(clang_path);
+      }
+      clang_version = latest_version;
+    }
+    else if (std::filesystem::exists(clang_path))
+      return clang_path;
     print<COUT>("\n{}\n", small_section_divider);
 
     auto to_upper = [](std::string string)
@@ -34396,21 +34725,42 @@ namespace csb::utility
 
 namespace csb
 {
+  // The name of the target.
   inline std::string target_name = "a";
+  // The artifact type of the target.
   inline artifact target_artifact = EXECUTABLE;
+  // The linkage type of the target.
   inline linkage target_linkage = STATIC;
+  // The subsystem type of the target (only affects Windows).
   inline subsystem target_subsystem = CONSOLE;
+  // The build configuration of the project.
   inline configuration target_configuration = RELEASE;
+  // The C++ standard of the project.
   inline standard cxx_standard = CXX20;
+  // The warning level of the project.
   inline warning warning_level = W4;
 
-  inline std::vector<std::filesystem::path> include_files = {};
+  // The target's source files.
   inline std::vector<std::filesystem::path> source_files = {};
+  // The target's include files.
+  inline std::vector<std::filesystem::path> include_files = {};
+  // The target's external include directories.
   inline std::vector<std::filesystem::path> external_include_directories = {};
+  // The target's library directories.
   inline std::vector<std::filesystem::path> library_directories = {};
+  // The target's libraries to link against.
   inline std::vector<std::string> libraries = {};
+  // The target's source file's preprocessor definitions.
   inline std::vector<std::string> definitions = {};
 
+  /**
+   * Runs a task unconditionally.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that returns a string.
+   *
+   * See also: `multi_task_run`, `live_task_run`.
+   */
   inline void task_run(const std::variant<std::string, std::function<std::string()>> &task)
   {
     print<COUT>("\n{}\n", utility::small_section_divider);
@@ -34435,6 +34785,17 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task if any files in a check files list are missing.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that takes a list of check files and returns a string. The string is
+   *           written in a custom language that allows for path placeholders. Refer to placeholder_path_replace for the
+   *           language specification.
+   * | `check_files`: A list of files to check for existence. If any of these files are missing, the task is run.
+   *
+   * See also: `multi_task_run`, `live_task_run`.
+   */
   inline void task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &)>> &task,
     const std::vector<std::filesystem::path> &check_files)
@@ -34480,6 +34841,23 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task if any files in a check files list are missing or out of date with respect to target files.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that takes a list of target files and expanded check files and returns a
+   *           string. The string is written in a custom language that allows for path placeholders. Refer to
+   *           placeholder_path_replace for the language specification.
+   * | `target_files`: A list of target files which will act as dependencies for the task to run.
+   * | `check_files`: A list of files to check for existence and modification time. If any of these files are missing or
+   *                 out of date with respect to the target files, the task is run. The check files can contain
+   *                 placeholders for target files.
+   * | `dependency_handler`: Can be provided to specify custom dependencies between target and check files, which takes
+   *                         a target file and that file's expanded check files as arguments and returns true if the
+   *                         target file is out of date.
+   *
+   * See also: `multi_task_run`, `live_task_run`.
+   */
   inline void task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &,
                                                               const std::vector<std::filesystem::path> &)>> &task,
@@ -34534,10 +34912,21 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task in parallel for multiple items if any files in a check files list are missing.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that takes a target file and a list of all target files and returns a
+   *           string. The string is written in a custom language that allows for path placeholders. Refer to
+   *           placeholder_path_replace for the language specification.
+   * | `check_files`: A list of files to check for existence. If any of these files are missing, the task is run for
+   *                  each missing file.
+   *
+   * See also: `task_run`, `live_task_run`.
+   */
   inline void multi_task_run(
-    const std::variant<
-      std::string, std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                                             const std::vector<std::filesystem::path> &)>> &task,
+    const std::variant<std::string, std::function<std::string(const std::filesystem::path &,
+                                                              const std::vector<std::filesystem::path> &)>> &task,
     const std::vector<std::filesystem::path> &check_files)
   {
     std::vector<std::filesystem::path> target_files = {};
@@ -34571,13 +34960,31 @@ namespace csb
       utility::multi_execute(std::get<std::string>(task), target_files, on_start, on_success, on_failure);
     else
       utility::multi_execute(
-        std::get<std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
-                                           const std::vector<std::filesystem::path> &)>>(task),
+        std::get<std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>>(
+          task),
         target_files, on_start, on_success, on_failure);
 
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task in parallel for multiple items if any files in a check files list are missing or out of date with
+   * respect to target files.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that takes a target file, a list of all target files, and a list of the
+   *           target file's expanded check files and returns a string. The string is written in a custom language that
+   *           allows for path placeholders. Refer to placeholder_path_replace for the language specification.
+   * | `target_files`: A list of target files which will act as dependencies for the task to run.
+   * | `check_files`: A list of files to check for existence and modification time. If any of these files are missing or
+   *                  out of date with respect to the target files, the task is run for each target file. The check
+   *                  files can contain placeholders for target files.
+   * | `dependency_handler`: Can be provided to specify custom dependencies between target and check files, which takes
+   *                         a target file and that file's expanded check files as arguments and returns true if the
+   *                         target file is out of date.
+   *
+   * See also: `task_run`, `live_task_run`.
+   */
   inline void multi_task_run(
     const std::variant<
       std::string, std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
@@ -34627,6 +35034,14 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task unconditionally while streaming its output live.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that returns a string.
+   *
+   * See also: `task_run`, `multi_task_run`.
+   */
   inline void live_task_run(const std::variant<std::string, std::function<std::string()>> &task)
   {
     print<COUT>("\n{}\n", utility::small_section_divider);
@@ -34642,6 +35057,17 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task if any files in a check files list are missing while streaming its output live.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that takes a list of check files and returns a string. The string is
+   *           written in a custom language that allows for path placeholders. Refer to placeholder_path_replace for the
+   *           language specification.
+   * | `check_files`: A list of files to check for existence. If any of these files are missing, the task is run.
+   *
+   * See also: `task_run`, `multi_task_run`.
+   */
   inline void live_task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &)>> &task,
     const std::vector<std::filesystem::path> &check_files)
@@ -34681,6 +35107,24 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Runs a task if any files in a check files list are missing or out of date with respect to target files while
+   * streaming its output live.
+   *
+   * This function's parameters behave as follows:
+   * | `task`: Can be a string or a function that takes a list of target files and expanded check files and returns a
+   *           string. The string is written in a custom language that allows for path placeholders. Refer to
+   *           placeholder_path_replace for the language specification.
+   * | `target_files`: A list of target files which will act as dependencies for the task to run.
+   * | `check_files`: A list of files to check for existence and modification time. If any of these files are missing or
+   *                  out of date with respect to the target files, the task is run. The check files can contain
+   *                  placeholders for target files.
+   * | `dependency_handler`: Can be provided to specify custom dependencies between target and check files, which takes
+   *                         a target file and that file's expanded check files as arguments and returns true if the
+   *                         target file is out of date.
+   *
+   * See also: `task_run`, `multi_task_run`.
+   */
   inline void live_task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &,
                                                               const std::vector<std::filesystem::path> &)>> &task,
@@ -34728,6 +35172,16 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Installs files from given URLS to corresponding target paths.
+   *
+   * This function's parameters behave as follows:
+   * | `files`: A list of tuples, each containing a URL and a target path. If all target paths already exist, the
+   *            function does nothing.
+   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every file in the list.
+   *
+   * See also: `archive_install`, `vcpkg_install`, `subproject_install`.
+   */
   inline void file_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &files,
                            const std::vector<std::string> &extra_arguments = {})
   {
@@ -34770,6 +35224,17 @@ namespace csb
     print<COUT>("{}\n", utility::small_section_divider);
   }
 
+  /**
+   * Installs and extracts archives from given URLS to corresponding target paths.
+   *
+   * This function's parameters behave as follows:
+   * | `archives`: A list of tuples, each containing a URL, an extract path, and a list of target paths within the
+   *               archive to extract. If the target paths list is empty, the entire archive is extracted to the extract
+   *               path. If all extract paths already exist, the function does nothing.
+   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every archive in the list.
+   *
+   * See also: `file_install`, `vcpkg_install`, `subproject_install`.
+   */
   inline void archive_install(
     const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>> &archives,
     const std::vector<std::string> &extra_arguments = {})
@@ -34843,6 +35308,66 @@ namespace csb
     }
   }
 
+  /**
+   * Installs vcpkg packages using an optional version anchor.
+   *
+   * This function's parameters behave as follows:
+   * | `vcpkg_version`: Specifies the vcpkg version (tag) to use. If empty, the latest version is used. The
+   *                    external_include_directories and library_directories are automatically updated.
+   * | `manifest`: A JSON object, or function that returns a JSON object, representing the vcpkg manifest file.
+   *
+   * See also: `file_install`, `archive_install`, `subproject_install`.
+   */
+  inline void vcpkg_install(const std::string &vcpkg_version,
+                            const std::variant<nlohmann::json, std::function<nlohmann::json()>> &manifest)
+  {
+    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
+    print<COUT>("\n{}\n", utility::small_section_divider);
+
+    auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
+
+    nlohmann::json manifest_json = {};
+    if (std::holds_alternative<nlohmann::json>(manifest))
+      manifest_json = std::get<nlohmann::json>(manifest);
+    else
+      manifest_json = std::get<std::function<nlohmann::json()>>(manifest)();
+    write_file(vcpkg_path.parent_path() / "vcpkg.json", manifest_json);
+
+    std::string vcpkg_triplet = {};
+    if (host_platform == WINDOWS)
+      vcpkg_triplet = std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
+                                  (target_configuration == RELEASE ? "-release" : ""));
+    else if (host_platform == LINUX)
+      vcpkg_triplet = std::format("{}-linux", host_architecture);
+    auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
+    utility::live_execute(
+      std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
+                  vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
+                  vcpkg_path.parent_path().string(), vcpkg_installed_directory.string()),
+      [&vcpkg_triplet](const std::string &) { print<COUT>("Using vcpkg triplet: {}\n", vcpkg_triplet); }, nullptr,
+      [](const std::string &, const int return_code)
+      { throw std::runtime_error("Failed to install vcpkg packages. Exited with: " + std::to_string(return_code)); });
+
+    std::pair<std::filesystem::path, std::filesystem::path> outputs = {
+      vcpkg_installed_directory / vcpkg_triplet / "include",
+      vcpkg_installed_directory / vcpkg_triplet /
+        (target_configuration == RELEASE ? "lib" : std::filesystem::path("debug") / "lib")};
+    if (std::filesystem::exists(outputs.first)) external_include_directories.push_back(outputs.first);
+    if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
+
+    print<COUT>("{}\n", utility::small_section_divider);
+  }
+
+  /**
+   * Installs subprojects from given GitHub repositories at specified versions.
+   *
+   * This function's parameters behave as follows:
+   * | `subprojects`: A list of tuples, each containing a GitHub repository name (in the format `owner/repo`), a version
+   *                  (tag), and an artifact type. If the artifact type is a library, the external_include_directories
+   *                  and library_directories are updated; if it is an executable, the PATH is updated.
+   *
+   * See also: `file_install`, `archive_install`, `vcpkg_install`.
+   */
   inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
   {
     if (subprojects.empty()) throw std::runtime_error("No subprojects to install.");
@@ -34956,59 +35481,54 @@ namespace csb
     }
   }
 
-  inline void vcpkg_install(const std::string &vcpkg_version)
-  {
-    if (vcpkg_version.empty()) throw std::runtime_error("vcpkg_version not set.");
-    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
-    print<COUT>("\n{}\n", utility::small_section_divider);
-
-    auto vcpkg_path = utility::bootstrap_vcpkg(vcpkg_version);
-
-    std::string vcpkg_triplet = {};
-    if (host_platform == WINDOWS)
-      vcpkg_triplet = std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
-                                  (target_configuration == RELEASE ? "-release" : ""));
-    else if (host_platform == LINUX)
-      vcpkg_triplet = std::format("{}-linux", host_architecture);
-    auto vcpkg_installed_directory = std::filesystem::path("build") / "vcpkg_installed";
-    utility::live_execute(
-      std::format("{} install --vcpkg-root {} --triplet {} --x-install-root {}", vcpkg_path.string(),
-                  vcpkg_path.parent_path().string(), vcpkg_triplet, vcpkg_installed_directory.string()),
-      [&vcpkg_triplet](const std::string &) { print<COUT>("Using vcpkg triplet: {}\n", vcpkg_triplet); }, nullptr,
-      [](const std::string &, const int return_code)
-      { throw std::runtime_error("Failed to install vcpkg packages. Exited with: " + std::to_string(return_code)); });
-
-    std::pair<std::filesystem::path, std::filesystem::path> outputs = {
-      vcpkg_installed_directory / vcpkg_triplet / "include",
-      vcpkg_installed_directory / vcpkg_triplet /
-        (target_configuration == RELEASE ? "lib" : std::filesystem::path("debug") / "lib")};
-    if (std::filesystem::exists(outputs.first)) external_include_directories.push_back(outputs.first);
-    if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
-
-    print<COUT>("{}\n", utility::small_section_divider);
-  }
-
-  inline std::string byte_to_hex(std::byte character)
-  {
-    std::stringstream ss;
-    ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
-    return ss.str();
-  };
-
-  template <utility::is_tuple tuple_type> inline void embed(
-    const std::pair<std::string, std::string> &start_content,
-    const std::tuple<std::function<std::string(const std::filesystem::path &, const std::string &, const tuple_type &)>,
-                     std::function<std::string(const std::filesystem::path &, const std::string &, const tuple_type &)>,
-                     std::function<std::string(const std::filesystem::path &)>,
-                     std::function<tuple_type(const std::filesystem::path &)>,
-                     std::function<std::vector<std::string>(const std::string &, const tuple_type &)>> &middle_content,
-    const std::pair<
-      std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, tuple_type>> &)>,
-      std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, tuple_type>> &)>>
-      &end_content,
-    const std::function<bool(const std::filesystem::path &)> &accept_function,
-    const std::vector<std::filesystem::path> &resources,
-    const std::pair<std::filesystem::path, std::filesystem::path> &outputs)
+  /**
+   * Embeds given resource files into generated header and source files based on specified functions.
+   *
+   * Takes a template parameter which specifies a tuple of types representing data that will be accessible during the
+   * functions that require it. Defaults to a tuple containing a single element of type std::vector<std::byte>, useful
+   * for raw binary data.
+   *
+   * This function's parameters behave as follows:
+   * | `start_content`: A pair of strings that will be placed at the start of the generated header and source files
+   *                    respectively.
+   * | `middle_content`: A tuple of five functions.
+   *                     The first two functions take the file, its generated variable name, and the data tuple as
+   *                     arguments and return strings that will be placed in the header and source files respectively
+   *                     for each resource file; the strings can contain placeholders in the format "(0)", "(1)", etc.
+   *                     that will be replaced with strings returned from the fifth function (you can still write
+   *                     regular parentheses by escaping them with double parentheses); by default, they do nothing.
+   *                     The third function takes the file and returns its generated variable name; by default, it just
+   *                     takes the filename and replace "." and "-" with "_".
+   *                     The fourth function takes the file and returns its data as the specified data tuple; by
+   *                     default, it just reads the file's raw binary data into a std::vector<std::byte>.
+   *                     The fifth function takes the file's generated variable name and its data tuple and returns a
+   *                     vector of strings that can be used as placeholder replacements in the first two functions; by
+   *                     default, it assumes the data tuple contains only a std::vector<std::byte> and returns a single
+   *                     string representing the data as a comma-separated list of hexadecimal byte values.
+   * | `end_content`: A pair of functions that take a vector of tuples containing each file, its generated variable
+   *                  name, and its data tuple as arguments and return strings that will be placed at the end of the
+   *                  generated header and source files respectively.
+   * | `accept_function`: A function that takes a file and returns true if it should be embedded; by default, all files
+   *                      are embedded.
+   * | `resources`: A list of resource files to embed.
+   * | `outputs`: A pair of output paths specifying where to write the generated header and source files respectively.
+   *
+   * See also: `read_file`, `byte_to_hex`.
+   */
+  template <utility::tuple tuple = std::tuple<std::vector<std::byte>>> inline void
+  embed(const std::pair<std::string, std::string> &start_content,
+        const std::tuple<std::function<std::string(const std::filesystem::path &, const std::string &, const tuple &)>,
+                         std::function<std::string(const std::filesystem::path &, const std::string &, const tuple &)>,
+                         std::function<std::string(const std::filesystem::path &)>,
+                         std::function<tuple(const std::filesystem::path &)>,
+                         std::function<std::vector<std::string>(const std::string &, const tuple &)>> &middle_content,
+        const std::pair<
+          std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, tuple>> &)>,
+          std::function<std::string(const std::vector<std::tuple<std::filesystem::path, std::string, tuple>> &)>>
+          &end_content,
+        const std::function<bool(const std::filesystem::path &)> &accept_function,
+        const std::vector<std::filesystem::path> &resources,
+        const std::pair<std::filesystem::path, std::filesystem::path> &outputs)
   {
     if (resources.empty()) throw std::runtime_error("No resources to embed.");
     if (outputs.first.empty() || outputs.second.empty()) throw std::runtime_error("Embed output files not set.");
@@ -35020,9 +35540,8 @@ namespace csb
     const auto &[output_header, output_source] = outputs;
 
     auto substitute_file_data =
-      [&](
-        std::string placeholder, const std::string &name, const tuple_type &data,
-        const std::function<std::vector<std::string>(const std::string &, const tuple_type &)> &handler) -> std::string
+      [&](std::string placeholder, const std::string &name, const tuple &data,
+          const std::function<std::vector<std::string>(const std::string &, const tuple &)> &handler) -> std::string
     {
       size_t pos = 0;
       while ((pos = placeholder.find("((", pos)) != std::string::npos)
@@ -35100,7 +35619,7 @@ namespace csb
         auto header_content = header_start_content;
         auto source_content = source_start_content;
 
-        std::vector<std::tuple<std::filesystem::path, std::string, tuple_type>> files = {};
+        std::vector<std::tuple<std::filesystem::path, std::string, tuple>> files = {};
         for (const auto &resource : task_resources)
         {
           if (accept_function && !accept_function(resource)) continue;
@@ -35109,7 +35628,7 @@ namespace csb
             throw std::runtime_error("Resource file does not exist or is not a regular file: " + resource.string() +
                                      ".");
 
-          tuple_type data = {};
+          tuple data = {};
           if (data_retrieval_function)
             data = data_retrieval_function(resource);
           else
@@ -35159,6 +35678,7 @@ namespace csb
       resources, {output_header, output_source});
   }
 
+  // Generates a compile_commands.json file for the current project.
   inline void generate_compile_commands()
   {
     if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
@@ -35239,10 +35759,17 @@ namespace csb
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
 
-  inline void clang_format(const std::string &clang_version, std::vector<std::filesystem::path> overrides = {},
+  /**
+   * Formats source and include files using clang-format with optional filtering and version anchoring.
+   *
+   * This function's parameters behave as follows:
+   * | `clang_version`: Specifies the clang version (tag) to use. If empty, the latest version is used.
+   * | `overrides`: A list of files to always format.
+   * | `excludes`: A list of files to never format.
+   */
+  inline void clang_format(const std::string &clang_version = {}, std::vector<std::filesystem::path> overrides = {},
                            std::vector<std::filesystem::path> excludes = {})
   {
-    if (clang_version.empty()) throw std::runtime_error("clang_version not set.");
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
 
     auto format_directory = std::filesystem::path("build") / "format";
@@ -35267,6 +35794,7 @@ namespace csb
                    format_files, {format_directory / "(filename).formatted", ".clang-format"});
   }
 
+  // Cleans the build directory, optionally ignoring specified files.
   inline void clean_build_directory(const std::vector<std::filesystem::path> &ignore_files = {})
   {
     if (!std::filesystem::exists("build")) return;
@@ -35281,6 +35809,7 @@ namespace csb
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
 
+  // Removes the specified files.
   inline void remove_files(const std::vector<std::filesystem::path> &files)
   {
     if (files.empty()) throw std::runtime_error("No files to remove.");
@@ -35295,6 +35824,7 @@ namespace csb
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
 
+  // Compiles the project source files into corresponding object files.
   inline void compile()
   {
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
@@ -35460,6 +35990,7 @@ namespace csb
     }
   }
 
+  // Links compiled object files into the final target artifact.
   inline void link()
   {
     if (!std::filesystem::exists(utility::build_directory)) throw std::runtime_error("Link called before compile.");
@@ -35547,7 +36078,15 @@ namespace csb
     }
   }
 
-  inline void run_target(const std::variant<std::string, std::vector<std::string>> &target_arguments = {})
+  /**
+   * Runs the built executable target with optional arguments.
+   *
+   * This function's parameters behave as follows:
+   * | `target_arguments`: The arguments to pass to the executable. They can be provided as a string, a vector of
+   *                       strings, or functions that return either of those types.
+   */
+  inline void run_target(const std::variant<std::string, std::vector<std::string>, std::function<std::string()>,
+                                            std::function<std::vector<std::string>()>> &target_arguments = {})
   {
     if (target_artifact != EXECUTABLE) throw std::runtime_error("Target artifact is not an executable.");
     std::filesystem::path executable_path = std::format(
@@ -35562,6 +36101,10 @@ namespace csb
       target_arguments_string = std::get<std::string>(target_arguments);
     else if (std::holds_alternative<std::vector<std::string>>(target_arguments))
       target_arguments_string = unpack(std::get<std::vector<std::string>>(target_arguments));
+    else if (std::holds_alternative<std::function<std::string()>>(target_arguments))
+      target_arguments_string = std::get<std::function<std::string()>>(target_arguments)();
+    else
+      target_arguments_string = unpack(std::get<std::function<std::vector<std::string>()>>(target_arguments)());
 
     utility::live_execute(
       std::format("{}{}", executable_path.string(),
