@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.8.1
+// CSB 1.8.2
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33871,6 +33871,22 @@ namespace csb
     else if constexpr (std::same_as<type, nlohmann::json>)
       output_file << container.dump(2);
     output_file.close();
+  }
+  /**
+   * Writes data to a specified file in a specified format.
+   *
+   * This function supports the following types:
+   * | `std::string`: Writes the string to the file.
+   * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
+   * | `std::vector<std::byte>`: Writes the byte array to the file.
+   * | `image`: Writing images is not supported.
+   * | `nlohmann::json`: Writes the JSON object to the file.
+   *
+   * See also: `read_file`, `modify_file`.
+   */
+  inline void write_file(const std::filesystem::path &file, const nlohmann::json &container)
+  {
+    write_file(file, container);
   }
 
   /**
