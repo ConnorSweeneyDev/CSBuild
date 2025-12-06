@@ -33321,6 +33321,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 #include <iterator>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <stdio.h>
@@ -33492,6 +33493,7 @@ namespace csb
    * | `warning_level`: The warning level to use (0-4).
    * | `source_files`: A list of the target's source files.
    * | `include_files`: A list of the target's include files.
+   * | `precompiled_headers`: A list of the target's precompiled header files.
    * | `external_include_directories`: A list of the target's external include directories.
    * | `library_directories`: A list of the target's library directories.
    * | `libraries`: A list of libraries to link against.
@@ -33538,7 +33540,7 @@ namespace csb
    * Runs when the `build` action is specified on the command line.
    *
    * Common uses for this function are to call the following functions:
-   * | `compile`: Compiles all source files into object files.
+   * | `compile`: Compiles all source files into object files and selected headers into precompiled headers.
    * | `link`: Links all object files into the target artifact.
    * | `generate_compile_commands`: Generates a compile_commands.json file for LSP support.
    * | `clang_format`: Formats all source and header files, with an optional version anchor, overrides and excludes.
@@ -34744,6 +34746,8 @@ namespace csb
   inline std::vector<std::filesystem::path> source_files = {};
   // The target's include files.
   inline std::vector<std::filesystem::path> include_files = {};
+  // The target's precompiled headers.
+  inline std::vector<std::filesystem::path> precompiled_headers = {};
   // The target's external include directories.
   inline std::vector<std::filesystem::path> external_include_directories = {};
   // The target's library directories.
@@ -35831,7 +35835,7 @@ namespace csb
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
 
-  // Compiles the project source files into corresponding object files.
+  // Compiles the project source files into corresponding object files and selected headers into precompiled headers.
   inline void compile()
   {
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
@@ -35860,59 +35864,131 @@ namespace csb
       std::string compile_external_include_directories = {};
       for (const auto &directory : external_include_directories)
         compile_external_include_directories += std::format("/external:I\"{}\" ", directory.string());
-      std::vector<std::filesystem::path> check_files = {utility::build_directory / "(filename.stem).obj",
-                                                        utility::build_directory / "(filename.stem).d"};
-      if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / "(filename.stem).pdb");
 
+      auto dependency_handler = [](const std::filesystem::path &,
+                                   const std::vector<std::filesystem::path> &checked_files) -> bool
+      {
+        auto object_time = std::filesystem::last_write_time(checked_files[0]);
+        std::filesystem::path dependency_path = checked_files[1];
+
+        std::ifstream dependency_file(dependency_path);
+        if (!dependency_file.is_open()) return true;
+        std::string json_content((std::istreambuf_iterator<char>(dependency_file)), std::istreambuf_iterator<char>());
+        dependency_file.close();
+
+        size_t includes_start = json_content.find("\"Includes\": [");
+        if (includes_start == std::string::npos) return true;
+        size_t includes_end = json_content.find("]", includes_start);
+        if (includes_end == std::string::npos) return true;
+        std::string includes_section = json_content.substr(includes_start + 13, includes_end - includes_start - 13);
+        size_t pos = 0;
+        while ((pos = includes_section.find("\"", pos)) != std::string::npos)
+        {
+          size_t start = pos + 1;
+          size_t end = includes_section.find("\"", start);
+          if (end == std::string::npos) break;
+          std::filesystem::path include_path = includes_section.substr(start, end - start);
+          if (std::filesystem::exists(include_path))
+          {
+            auto include_time = std::filesystem::last_write_time(include_path);
+            if (include_time > object_time) return true;
+          }
+          pos = end + 1;
+        }
+
+        size_t pch_start = json_content.find("\"PCH\": \"");
+        if (pch_start == std::string::npos) return false;
+        size_t pch_end = json_content.find("\",", pch_start);
+        if (pch_end == std::string::npos) return false;
+        std::filesystem::path pch_path = json_content.substr(pch_start + 8, pch_end - pch_start - 8);
+        if (std::filesystem::exists(pch_path))
+        {
+          auto pch_time = std::filesystem::last_write_time(pch_path);
+          if (pch_time > object_time) return true;
+        }
+
+        return false;
+      };
+
+      auto pch_directory = utility::build_directory / "pch";
+      if (!std::filesystem::exists(pch_directory)) std::filesystem::create_directories(pch_directory);
+      std::vector<std::filesystem::path> check_files = {pch_directory / "(filename.stem)_pch.obj",
+                                                        pch_directory / "(filename.stem)_pch.d",
+                                                        pch_directory / "(filename.stem).pch"};
+      if (target_configuration == DEBUG) check_files.push_back(pch_directory / "(filename.stem)_pch.pdb");
       multi_task_run(
         [&](const auto &file, const std::vector<std::filesystem::path> &, const std::vector<std::filesystem::path> &)
         {
+          std::string relative_path = std::filesystem::relative(file, pch_directory).string();
+          for (const auto &character : relative_path)
+            if (character == '/') relative_path.replace(relative_path.find(character), 1, "\\");
+          write_file<std::string>(pch_directory / (file.stem().string() + "_pch.cpp"),
+                                  std::format("#include \"{}\"", relative_path));
+
+          std::string compiler = {};
+          if (file.extension() == ".h")
+            compiler = "cl /std:c17 /TC";
+          else
+            compiler = "cl /std:c++" + std::to_string(cxx_standard);
+          return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
+                             "/Fd{} /sourceDependencies{} {}{}/c /Yc{} /Fp{} \"{}\"",
+                             compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
+                             compile_definitions, pch_directory.string(), pch_directory.string(),
+                             (pch_directory / "(stem)_pch.pdb").string(), (pch_directory / "(stem)_pch.d").string(),
+                             compile_include_directories, compile_external_include_directories, relative_path,
+                             (pch_directory / "(stem).pch").string(), (pch_directory / "(stem)_pch.cpp").string());
+        },
+        precompiled_headers, check_files, dependency_handler);
+
+      check_files = {utility::build_directory / "(filename.stem).obj", utility::build_directory / "(filename.stem).d"};
+      if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / "(filename.stem).pdb");
+      multi_task_run(
+        [&](const auto &file, const std::vector<std::filesystem::path> &, const std::vector<std::filesystem::path> &)
+        {
+          std::ifstream read_file(file);
+          if (!read_file.is_open())
+            throw std::runtime_error("Failed to open source file for reading: " + file.string() + ".");
+          std::string first_line;
+          std::filesystem::path precompiled_header = {};
+          while (std::getline(read_file, first_line))
+          {
+            if (first_line.empty()) continue;
+            if (first_line.find("#include") == std::string::npos) break;
+            std::regex include_regex(R"(#include\s*["<](.*)[">])");
+            std::smatch match;
+            if (std::regex_search(first_line, match, include_regex))
+            {
+              std::filesystem::path include_path = match[1].str();
+              for (const auto &header : precompiled_headers)
+              {
+                if (include_path.filename() == header.filename())
+                {
+                  precompiled_header = header;
+                  break;
+                }
+              }
+            }
+          }
+          read_file.close();
+          std::string pch_flags = {};
+          if (!precompiled_header.empty())
+            pch_flags = std::format("/Yu\"{}\" /Fp\"{}\" ", precompiled_header.filename().string(),
+                                    (pch_directory / (precompiled_header.stem().string() + ".pch")).string());
+
           std::string compiler = {};
           if (file.extension() == ".c")
             compiler = "cl /std:c17 /TC";
           else
             compiler = "cl /std:c++" + std::to_string(cxx_standard);
           return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-                             "/Fd{} /sourceDependencies{} {}{}/c \"()\"",
+                             "/Fd{} /sourceDependencies{} {}{}/c {}\"()\"",
                              compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
                              compile_definitions, utility::build_directory.string(), utility::build_directory.string(),
                              (utility::build_directory / "(stem).pdb").string(),
                              (utility::build_directory / "(stem).d").string(), compile_include_directories,
-                             compile_external_include_directories);
+                             compile_external_include_directories, pch_flags);
         },
-        source_files, check_files,
-        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
-        {
-          auto object_time = std::filesystem::last_write_time(checked_files[0]);
-          std::filesystem::path dependency_path = checked_files[1];
-
-          std::ifstream dependency_file(dependency_path);
-          if (!dependency_file.is_open()) return true;
-          std::string json_content((std::istreambuf_iterator<char>(dependency_file)), std::istreambuf_iterator<char>());
-          dependency_file.close();
-
-          size_t includes_start = json_content.find("\"Includes\": [");
-          if (includes_start == std::string::npos) return true;
-          size_t includes_end = json_content.find("]", includes_start);
-          if (includes_end == std::string::npos) return true;
-
-          std::string includes_section = json_content.substr(includes_start + 13, includes_end - includes_start - 13);
-          size_t pos = 0;
-          while ((pos = includes_section.find("\"", pos)) != std::string::npos)
-          {
-            size_t start = pos + 1;
-            size_t end = includes_section.find("\"", start);
-            if (end == std::string::npos) break;
-            std::filesystem::path include_path = includes_section.substr(start, end - start);
-            if (std::filesystem::exists(include_path))
-            {
-              auto include_time = std::filesystem::last_write_time(include_path);
-              if (include_time > object_time) return true;
-            }
-            pos = end + 1;
-          }
-          return false;
-        });
+        source_files, check_files, dependency_handler);
     }
     else if (host_platform == LINUX)
     {
@@ -36034,11 +36110,18 @@ namespace csb
       std::string link_objects = {};
       for (const auto &source_file : source_files)
         link_objects += std::format("{}.obj ", (utility::build_directory / source_file.stem()).string());
+      for (const auto &precompiled_header : precompiled_headers)
+        link_objects +=
+          std::format("{}_pch.obj ", (utility::build_directory / "pch" / precompiled_header.stem()).string());
 
       std::vector<std::filesystem::path> target_files = {};
-      target_files.reserve(source_files.size() + include_files.size());
+      target_files.reserve((source_files.size() * 2) + include_files.size() + precompiled_headers.size());
       target_files.insert(target_files.end(), source_files.begin(), source_files.end());
       target_files.insert(target_files.end(), include_files.begin(), include_files.end());
+      for (const auto &source_file : source_files)
+        target_files.push_back(utility::build_directory / (source_file.stem().string() + ".obj"));
+      for (const auto &precompiled_header : precompiled_headers)
+        target_files.push_back(utility::build_directory / "pch" / (precompiled_header.stem().string() + ".pch"));
       std::vector<std::filesystem::path> check_files = {utility::build_directory / (target_name + "." + extension)};
       if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / (target_name + ".pdb"));
 
