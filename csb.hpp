@@ -35858,6 +35858,12 @@ namespace csb
         if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
                                                         include_file.parent_path()) == include_directories.end())
           include_directories.push_back(include_file.parent_path());
+      for (const auto &header : precompiled_headers)
+        if (header.has_parent_path() &&
+            std::find(include_directories.begin(), include_directories.end(), header.parent_path()) ==
+              include_directories.end())
+          include_directories.push_back(header.parent_path());
+      if (!precompiled_headers.empty()) include_directories.push_back(utility::build_directory / "pch");
       std::string compile_include_directories = {};
       for (const auto &directory : include_directories)
         compile_include_directories += std::format("/I\"{}\" ", directory.string());
@@ -36001,14 +36007,18 @@ namespace csb
         if (include_file.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
                                                         include_file.parent_path()) == include_directories.end())
           include_directories.push_back(include_file.parent_path());
+      for (const auto &header : precompiled_headers)
+        if (header.has_parent_path() &&
+            std::find(include_directories.begin(), include_directories.end(), header.parent_path()) ==
+              include_directories.end())
+          include_directories.push_back(header.parent_path());
+      if (!precompiled_headers.empty()) include_directories.push_back(utility::build_directory / "pch");
       std::string compile_include_directories = {};
       for (const auto &directory : include_directories)
         compile_include_directories += std::format("-I\"{}\" ", directory.string());
       std::string compile_external_include_directories = {};
       for (const auto &directory : external_include_directories)
         compile_external_include_directories += std::format("-isystem\"{}\" ", directory.string());
-      std::vector<std::filesystem::path> check_files = {utility::build_directory / "(filename.stem).o",
-                                                        utility::build_directory / "(filename.stem).d"};
       std::string warning_flags = {};
       if (warning_level >= W1) warning_flags += "-Wall ";
       if (warning_level >= W2) warning_flags += "-Wextra ";
@@ -36017,6 +36027,63 @@ namespace csb
         warning_flags += "-Wconversion -Wshadow -Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align "
                          "-Wfloat-equal -Wformat=2 ";
 
+      auto dependency_handler = [](const std::filesystem::path &,
+                                   const std::vector<std::filesystem::path> &checked_files) -> bool
+      {
+        auto object_time = std::filesystem::last_write_time(checked_files[0]);
+        std::filesystem::path dependency_path = checked_files[1];
+
+        std::ifstream dependency_file(dependency_path);
+        if (!dependency_file.is_open()) return true;
+        std::string line;
+        std::string full_content;
+        while (std::getline(dependency_file, line))
+        {
+          if (line.empty()) continue;
+          if (line.back() == '\\') line.pop_back();
+          full_content += line + " ";
+        }
+        dependency_file.close();
+
+        size_t colon_pos = full_content.find(':');
+        if (colon_pos == std::string::npos) return true;
+        std::string dependencies = full_content.substr(colon_pos + 1);
+        size_t pos = 0;
+        while (pos < dependencies.length())
+        {
+          while (pos < dependencies.length() && std::isspace(dependencies[pos])) pos++;
+          if (pos >= dependencies.length()) break;
+          size_t end = pos;
+          while (end < dependencies.length() && !std::isspace(dependencies[end])) end++;
+          std::filesystem::path include_path = dependencies.substr(pos, end - pos);
+          if (std::filesystem::exists(include_path))
+          {
+            auto include_time = std::filesystem::last_write_time(include_path);
+            if (include_time > object_time) return true;
+          }
+          pos = end;
+        }
+
+        return false;
+      };
+
+      auto pch_directory = utility::build_directory / "pch";
+      std::vector<std::filesystem::path> check_files = {pch_directory / "(filename).gch",
+                                                        pch_directory / "(filename).d"};
+      multi_task_run(
+        [&](const auto &file, const std::vector<std::filesystem::path> &, const std::vector<std::filesystem::path> &)
+        {
+          std::string compiler = {};
+          if (file.extension() == ".h")
+            compiler = "gcc -std=c17";
+          else
+            compiler = "g++ -std=c++" + std::to_string(cxx_standard);
+          return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"()\" -o {}/(filename).gch", compiler, warning_flags,
+                             compile_debug_flags, compile_pic_flag, compile_definitions, compile_include_directories,
+                             compile_external_include_directories, pch_directory.string());
+        }, precompiled_headers, check_files, dependency_handler);
+
+      check_files = {utility::build_directory / "(filename.stem).o", utility::build_directory / "(filename.stem).d"};
       multi_task_run(
         [&](const auto &file, const std::vector<std::filesystem::path> &, const std::vector<std::filesystem::path> &)
         {
@@ -36029,47 +36096,7 @@ namespace csb
                              compile_debug_flags, compile_pic_flag, compile_definitions, compile_include_directories,
                              compile_external_include_directories, utility::build_directory.string());
         },
-        source_files, check_files,
-        [](const std::filesystem::path &, const std::vector<std::filesystem::path> &checked_files) -> bool
-        {
-          auto object_time = std::filesystem::last_write_time(checked_files[0]);
-          std::filesystem::path dependency_path = checked_files[1];
-
-          std::ifstream dependency_file(dependency_path);
-          if (!dependency_file.is_open()) return true;
-          std::string line;
-          std::string full_content;
-          while (std::getline(dependency_file, line))
-          {
-            if (line.empty()) continue;
-            if (line.back() == '\\') line.pop_back();
-            full_content += line + " ";
-          }
-          dependency_file.close();
-
-          size_t colon_pos = full_content.find(':');
-          if (colon_pos == std::string::npos) return true;
-          std::string dependencies = full_content.substr(colon_pos + 1);
-
-          size_t pos = 0;
-          while (pos < dependencies.length())
-          {
-            while (pos < dependencies.length() && std::isspace(dependencies[pos])) pos++;
-            if (pos >= dependencies.length()) break;
-
-            size_t end = pos;
-            while (end < dependencies.length() && !std::isspace(dependencies[end])) end++;
-
-            std::filesystem::path include_path = dependencies.substr(pos, end - pos);
-            if (std::filesystem::exists(include_path))
-            {
-              auto include_time = std::filesystem::last_write_time(include_path);
-              if (include_time > object_time) return true;
-            }
-            pos = end;
-          }
-          return false;
-        });
+        source_files, check_files, dependency_handler);
     }
   }
 
@@ -36148,9 +36175,13 @@ namespace csb
         link_objects += std::format("{}.o ", (utility::build_directory / source_file.stem()).string());
 
       std::vector<std::filesystem::path> target_files = {};
-      target_files.reserve(source_files.size() + include_files.size());
+      target_files.reserve((source_files.size() * 2) + include_files.size() + precompiled_headers.size());
       target_files.insert(target_files.end(), source_files.begin(), source_files.end());
       target_files.insert(target_files.end(), include_files.begin(), include_files.end());
+      for (const auto &source_file : source_files)
+        target_files.push_back(utility::build_directory / (source_file.stem().string() + ".o"));
+      for (const auto &precompiled_header : precompiled_headers)
+        target_files.push_back(utility::build_directory / "pch" / (precompiled_header.string() + ".gch"));
       std::vector<std::filesystem::path> check_files = {utility::build_directory / output_name};
 
       std::string command;
