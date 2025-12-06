@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.8.1
+// CSB 1.9.0
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35859,11 +35859,11 @@ namespace csb
                                                         include_file.parent_path()) == include_directories.end())
           include_directories.push_back(include_file.parent_path());
       for (const auto &header : precompiled_headers)
-        if (header.has_parent_path() &&
-            std::find(include_directories.begin(), include_directories.end(), header.parent_path()) ==
-              include_directories.end())
+        if (header.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
+                                                  header.parent_path()) == include_directories.end())
           include_directories.push_back(header.parent_path());
-      if (!precompiled_headers.empty()) include_directories.push_back(utility::build_directory / "pch");
+      if (!precompiled_headers.empty())
+        include_directories.insert(include_directories.begin(), utility::build_directory / "pch");
       std::string compile_include_directories = {};
       for (const auto &directory : include_directories)
         compile_include_directories += std::format("/I\"{}\" ", directory.string());
@@ -35917,7 +35917,8 @@ namespace csb
       };
 
       auto pch_directory = utility::build_directory / "pch";
-      if (!std::filesystem::exists(pch_directory)) std::filesystem::create_directories(pch_directory);
+      if (!precompiled_headers.empty() && !std::filesystem::exists(pch_directory))
+        std::filesystem::create_directories(pch_directory);
       std::vector<std::filesystem::path> check_files = {pch_directory / "(filename.stem)_pch.obj",
                                                         pch_directory / "(filename.stem)_pch.d",
                                                         pch_directory / "(filename.stem).pch"};
@@ -35937,7 +35938,7 @@ namespace csb
           else
             compiler = "cl /std:c++" + std::to_string(cxx_standard);
           return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-                             "/Fd{} /sourceDependencies{} {}{}/c /Yc{} /Fp{} \"{}\"",
+                             "/Fd\"{}\" /sourceDependencies\"{}\" {}{}/c /Yc\"{}\" /Fp\"{}\" \"{}\"",
                              compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
                              compile_definitions, pch_directory.string(), pch_directory.string(),
                              (pch_directory / "(stem)_pch.pdb").string(), (pch_directory / "(stem)_pch.d").string(),
@@ -35987,7 +35988,7 @@ namespace csb
           else
             compiler = "cl /std:c++" + std::to_string(cxx_standard);
           return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-                             "/Fd{} /sourceDependencies{} {}{}/c {}\"()\"",
+                             "/Fd\"{}\" /sourceDependencies\"{}\" {}{}/c {}\"()\"",
                              compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
                              compile_definitions, utility::build_directory.string(), utility::build_directory.string(),
                              (utility::build_directory / "(stem).pdb").string(),
@@ -36008,11 +36009,11 @@ namespace csb
                                                         include_file.parent_path()) == include_directories.end())
           include_directories.push_back(include_file.parent_path());
       for (const auto &header : precompiled_headers)
-        if (header.has_parent_path() &&
-            std::find(include_directories.begin(), include_directories.end(), header.parent_path()) ==
-              include_directories.end())
+        if (header.has_parent_path() && std::find(include_directories.begin(), include_directories.end(),
+                                                  header.parent_path()) == include_directories.end())
           include_directories.push_back(header.parent_path());
-      if (!precompiled_headers.empty()) include_directories.push_back(utility::build_directory / "pch");
+      if (!precompiled_headers.empty())
+        include_directories.insert(include_directories.begin(), utility::build_directory / "pch");
       std::string compile_include_directories = {};
       for (const auto &directory : include_directories)
         compile_include_directories += std::format("-I\"{}\" ", directory.string());
@@ -36027,7 +36028,7 @@ namespace csb
         warning_flags += "-Wconversion -Wshadow -Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align "
                          "-Wfloat-equal -Wformat=2 ";
 
-      auto dependency_handler = [](const std::filesystem::path &,
+      auto dependency_handler = [](const std::filesystem::path &file,
                                    const std::vector<std::filesystem::path> &checked_files) -> bool
       {
         auto object_time = std::filesystem::last_write_time(checked_files[0]);
@@ -36064,15 +36065,55 @@ namespace csb
           pos = end;
         }
 
+        if (file.extension() != ".c" && file.extension() != ".cpp") return false;
+        std::ifstream read_file(file);
+        if (!read_file.is_open())
+          throw std::runtime_error("Failed to open source file for reading: " + file.string() + ".");
+        std::string first_line;
+        while (std::getline(read_file, first_line))
+        {
+          if (first_line.empty()) continue;
+          if (first_line.find("#include") == std::string::npos) break;
+          std::regex include_regex(R"(#include\s*["<](.*)[">])");
+          std::smatch match;
+          if (std::regex_search(first_line, match, include_regex))
+          {
+            std::filesystem::path include_path = match[1].str();
+            for (const auto &header : precompiled_headers)
+            {
+              if (include_path.filename() == header.filename())
+              {
+                auto pch_path = utility::build_directory / "pch" / (header.filename().string() + ".gch");
+                if (std::filesystem::exists(pch_path))
+                {
+                  auto pch_time = std::filesystem::last_write_time(pch_path);
+                  if (pch_time > object_time)
+                  {
+                    read_file.close();
+                    return true;
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+        read_file.close();
+
         return false;
       };
 
       auto pch_directory = utility::build_directory / "pch";
+      if (!precompiled_headers.empty() && !std::filesystem::exists(pch_directory))
+        std::filesystem::create_directories(pch_directory);
       std::vector<std::filesystem::path> check_files = {pch_directory / "(filename).gch",
                                                         pch_directory / "(filename).d"};
       multi_task_run(
         [&](const auto &file, const std::vector<std::filesystem::path> &, const std::vector<std::filesystem::path> &)
         {
+          std::filesystem::copy_file(file, pch_directory / file.filename(),
+                                     std::filesystem::copy_options::overwrite_existing);
+
           std::string compiler = {};
           if (file.extension() == ".h")
             compiler = "gcc -std=c17";
@@ -36081,7 +36122,8 @@ namespace csb
           return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"()\" -o \"{}/(filename).gch\"", compiler, warning_flags,
                              compile_debug_flags, compile_pic_flag, compile_definitions, compile_include_directories,
                              compile_external_include_directories, pch_directory.string());
-        }, precompiled_headers, check_files, dependency_handler);
+        },
+        precompiled_headers, check_files, dependency_handler);
 
       check_files = {utility::build_directory / "(filename.stem).o", utility::build_directory / "(filename.stem).d"};
       multi_task_run(
@@ -36136,7 +36178,7 @@ namespace csb
       for (const auto &library : libraries) link_libraries += std::format("{}.lib ", library);
       std::string link_objects = {};
       for (const auto &source_file : source_files)
-        link_objects += std::format("{}.obj ", (utility::build_directory / source_file.stem()).string());
+        link_objects += std::format("\"{}.obj\" ", (utility::build_directory / source_file.stem()).string());
       for (const auto &precompiled_header : precompiled_headers)
         link_objects +=
           std::format("{}_pch.obj ", (utility::build_directory / "pch" / precompiled_header.stem()).string());
@@ -36152,7 +36194,7 @@ namespace csb
       std::vector<std::filesystem::path> check_files = {utility::build_directory / (target_name + "." + extension)};
       if (target_configuration == DEBUG) check_files.push_back(utility::build_directory / (target_name + ".pdb"));
 
-      task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:{}", executable_option,
+      task_run(std::format("{} /NOLOGO /MACHINE:{} {}/SUBSYSTEM:{} {}{}{}{}{}/OUT:\"{}\"", executable_option,
                            host_architecture, dynamic_flags, console_option, link_debug_flags, link_library_directories,
                            link_libraries, link_objects, output_flags,
                            (utility::build_directory / (target_name + "." + extension)).string()),
@@ -36172,7 +36214,7 @@ namespace csb
       for (const auto &library : libraries) link_libraries += std::format("-l{} ", library);
       std::string link_objects = {};
       for (const auto &source_file : source_files)
-        link_objects += std::format("{}.o ", (utility::build_directory / source_file.stem()).string());
+        link_objects += std::format("\"{}.o\" ", (utility::build_directory / source_file.stem()).string());
 
       std::vector<std::filesystem::path> target_files = {};
       target_files.reserve((source_files.size() * 2) + include_files.size() + precompiled_headers.size());
