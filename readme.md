@@ -6,7 +6,7 @@ A zero dependency, cross-platform build system for C++ projects.
 - **Cross-Platform**: Works on both Windows and Linux.
 - **Automatic Incremental Builds**: Dependencies are tracked, and only affected steps are re-run.
 - **Simple Configuration**: Uses a `csb.cpp` file in the root for configuration.
-- **Pre-compiled Header Support**: Easily use pre-compiled headers.
+- **Pre-Compiled Header Support**: Easily use pre-compiled headers.
 - **Custom Build Steps**: Define custom build steps for specialized tasks.
 - **Multi-Project Support**: Easily use other projects that use CSBuild as a build system.
 - **Archive Support**: Easily download and extract archives as part of the build process.
