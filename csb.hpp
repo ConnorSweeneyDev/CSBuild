@@ -36078,7 +36078,7 @@ namespace csb
             compiler = "gcc -std=c17";
           else
             compiler = "g++ -std=c++" + std::to_string(cxx_standard);
-          return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"()\" -o {}/(filename).gch", compiler, warning_flags,
+          return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"()\" -o \"{}/(filename).gch\"", compiler, warning_flags,
                              compile_debug_flags, compile_pic_flag, compile_definitions, compile_include_directories,
                              compile_external_include_directories, pch_directory.string());
         }, precompiled_headers, check_files, dependency_handler);
@@ -36092,7 +36092,7 @@ namespace csb
             compiler = "gcc -std=c17";
           else
             compiler = "g++ -std=c++" + std::to_string(cxx_standard);
-          return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"()\" -o {}/(stem).o", compiler, warning_flags,
+          return std::format("{} {}{}{}-MMD -MP {}{}{}-c \"()\" -o \"{}/(stem).o\"", compiler, warning_flags,
                              compile_debug_flags, compile_pic_flag, compile_definitions, compile_include_directories,
                              compile_external_include_directories, utility::build_directory.string());
         },
@@ -36181,7 +36181,7 @@ namespace csb
       for (const auto &source_file : source_files)
         target_files.push_back(utility::build_directory / (source_file.stem().string() + ".o"));
       for (const auto &precompiled_header : precompiled_headers)
-        target_files.push_back(utility::build_directory / "pch" / (precompiled_header.string() + ".gch"));
+        target_files.push_back(utility::build_directory / "pch" / (precompiled_header.filename().string() + ".gch"));
       std::vector<std::filesystem::path> check_files = {utility::build_directory / output_name};
 
       std::string command;
