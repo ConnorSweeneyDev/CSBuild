@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.1
+// CSB 1.9.2
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -34535,6 +34535,7 @@ namespace csb::utility
                     (host_platform == WINDOWS ? "vcpkg.exe" : "vcpkg")};
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
+      print<COUT>("\n{}\n", small_section_divider);
       needs_bootstrap = true;
       live_execute(
         "git clone --progress https://github.com/microsoft/vcpkg.git " + vcpkg_path.parent_path().string(), nullptr,
@@ -34591,6 +34592,7 @@ namespace csb::utility
       });
     if (current_hash != target_hash)
     {
+      if (!needs_bootstrap) print<COUT>("\n{}\n", small_section_divider);
       needs_bootstrap = true;
       live_execute(
         std::format("cd {} && git -c advice.detachedHead=false checkout --progress {}",
@@ -34600,32 +34602,21 @@ namespace csb::utility
         { throw std::runtime_error("Failed to checkout vcpkg version. Exited with: " + std::to_string(return_code)); });
     }
 
-    if (!needs_bootstrap)
-    {
-      print<COUT>("Using vcpkg version: {}\n", vcpkg_version);
-      return vcpkg_path;
-    }
+    if (!needs_bootstrap) return vcpkg_path;
     execute(
       std::format("cd {} && {}bootstrap-vcpkg.{} -disableMetrics", vcpkg_path.parent_path().string(),
                   host_platform == WINDOWS ? "" : "./", host_platform == WINDOWS ? "bat" : "sh"),
       [](const std::string &) { print<COUT>("Bootstrapping vcpkg... "); },
-      [](const std::string &, const std::string &output)
-      {
-        print<COUT>("done.\n");
-        size_t start{output.find("https://")};
-        if (start != std::string::npos)
-        {
-          size_t end{output.find("...", start)};
-          if (end != std::string::npos) print<COUT>("{}\n", output.substr(start, end - start));
-        }
-      },
+      [](const std::string &, const std::string &) { print<COUT>("done.\n"); },
       [](const std::string &, const int return_code, const std::string &output)
       {
         print<CERR>("{}\n", output);
         throw std::runtime_error("Failed to bootstrap vcpkg. Return code: " + std::to_string(return_code));
       });
-
+    std::filesystem::remove(vcpkg_path.parent_path() / "vcpkg.json");
     if (!std::filesystem::exists(vcpkg_path)) throw std::runtime_error("Failed to find " + vcpkg_path.string() + ".");
+
+    print<COUT>("{}\n", small_section_divider);
     return vcpkg_path;
   }
 
@@ -35328,11 +35319,8 @@ namespace csb
   inline void vcpkg_install(const std::string &vcpkg_version, const nlohmann::json &manifest)
   {
     if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
-    print<COUT>("\n{}\n", utility::small_section_divider);
 
     auto vcpkg_path{utility::bootstrap_vcpkg(vcpkg_version)};
-
-    write_file(vcpkg_path.parent_path() / "vcpkg.json", manifest);
     std::string vcpkg_triplet{};
     if (host_platform == WINDOWS)
       vcpkg_triplet = std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
@@ -35340,13 +35328,24 @@ namespace csb
     else if (host_platform == LINUX)
       vcpkg_triplet = std::format("{}-linux", host_architecture);
     auto vcpkg_installed_directory{std::filesystem::path{"build"} / "vcpkg_installed"};
-    utility::live_execute(
-      std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
-                  vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
-                  vcpkg_path.parent_path().string(), vcpkg_installed_directory.string()),
-      [&vcpkg_triplet](const std::string &) { print<COUT>("Using vcpkg triplet: {}\n", vcpkg_triplet); }, nullptr,
-      [](const std::string &, const int return_code)
-      { throw std::runtime_error("Failed to install vcpkg packages. Exited with: " + std::to_string(return_code)); });
+    auto manifest_path{vcpkg_path.parent_path() / "vcpkg.json"};
+    auto manifest_time{std::filesystem::exists(manifest_path) ? std::filesystem::last_write_time(manifest_path)
+                                                              : std::filesystem::file_time_type::min()};
+    if (manifest_time < std::filesystem::last_write_time("csb.cpp") ||
+        manifest_time < std::filesystem::last_write_time("csb.hpp") || !manifest.contains("builtin-baseline"))
+      utility::live_execute(
+        std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
+                    vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
+                    vcpkg_path.parent_path().string(), vcpkg_installed_directory.string()),
+        [&vcpkg_path, &manifest, &vcpkg_version, &vcpkg_triplet](const std::string &)
+        {
+          write_file(vcpkg_path.parent_path() / "vcpkg.json", manifest);
+          print<COUT>("\n{}\nUsing vcpkg version: {}\nUsing vcpkg triplet: {}\n", utility::small_section_divider,
+                      vcpkg_version, vcpkg_triplet);
+        },
+        [](const std::string &) { print<COUT>("{}\n", utility::small_section_divider); },
+        [](const std::string &, const int return_code)
+        { throw std::runtime_error("Failed to install vcpkg packages. Exited with: " + std::to_string(return_code)); });
 
     std::pair<std::filesystem::path, std::filesystem::path> outputs{
       vcpkg_installed_directory / vcpkg_triplet / "include",
@@ -35354,8 +35353,6 @@ namespace csb
         (target_configuration == RELEASE ? "lib" : std::filesystem::path{"debug"} / "lib")};
     if (std::filesystem::exists(outputs.first)) external_include_directories.push_back(outputs.first);
     if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
-
-    print<COUT>("{}\n", utility::small_section_divider);
   }
   /**
    * Installs vcpkg packages using an optional version anchor.
