@@ -35716,13 +35716,14 @@ namespace csb
     std::string compile_definitions{host_platform == WINDOWS ? "-D_WIN32 " : "-D__linux__ "};
     compile_definitions += target_configuration == DEBUG ? "-D_DEBUG" : "-DNDEBUG";
     std::string csb_output{(std::filesystem::path{"build"} / "csb.o").string()};
-    std::string content{std::format(
-      "[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
-      "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
-      "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2 {} -c csb.cpp -o {}\"\n  }},\n",
-      escape_backslashes(std::filesystem::current_path().string()),
-      escape_backslashes((std::filesystem::current_path() / std::filesystem::path{"csb.cpp"}).string()),
-      cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard), compile_definitions, csb_output)};
+    std::string content{
+      std::format("[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
+                  "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
+                  "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2 {} -c csb.cpp -o {}\"\n  }},\n",
+                  escape_backslashes(std::filesystem::current_path().string()),
+                  escape_backslashes((std::filesystem::current_path() / std::filesystem::path{"csb.cpp"}).string()),
+                  cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard), compile_definitions,
+                  escape_backslashes(csb_output))};
     for (auto iterator{source_files.begin()}; iterator != source_files.end();)
     {
       std::string compiler{};
