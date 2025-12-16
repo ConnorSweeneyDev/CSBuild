@@ -34795,8 +34795,8 @@ namespace csb::utility
       { throw std::runtime_error("Failed to download clang archive. Exited with: " + std::to_string(return_code)); });
     utility::live_execute(
       std::format("tar -xf {} -C build", (std::filesystem::path{"build"} / "temp.tar.xz").string()),
-      [](const std::string &) { print<COUT>("Extracting archive... "); }, nullptr,
-      [](const std::string &, const int return_code)
+      [&clang_path](const std::string &) { print<COUT>("Extracting archive to '{}'... ", clang_path.string()); },
+      nullptr, [](const std::string &, const int return_code)
       { throw std::runtime_error("Failed to extract clang archive. Exited with: " + std::to_string(return_code)); });
     std::filesystem::remove(std::filesystem::path{"build"} / "temp.tar.xz");
     auto extracted_path{"build" / archive.stem().stem()};
