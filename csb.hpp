@@ -34536,9 +34536,7 @@ namespace csb::utility
   {
     bool needs_bootstrap{};
 
-    auto vcpkg_path{std::filesystem::path{"build"} /
-                    std::format("vcpkg-{}", vcpkg_version.empty() ? "latest" : vcpkg_version) /
-                    (host_platform == WINDOWS ? "vcpkg.exe" : "vcpkg")};
+    auto vcpkg_path{std::filesystem::path{"build"} / "vcpkg" / (host_platform == WINDOWS ? "vcpkg.exe" : "vcpkg")};
     if (!std::filesystem::exists(vcpkg_path.parent_path()))
     {
       print<COUT>("\n{}\n", small_section_divider);
@@ -34571,7 +34569,10 @@ namespace csb::utility
                 throw std::runtime_error("Failed to fetch vcpkg tags. Return code: " + std::to_string(return_code));
               });
       execute(
-        std::format("cd {} && git describe --tags --abbrev=0", vcpkg_path.parent_path().string()), nullptr,
+        std::format(
+          "cd {} && git for-each-ref --sort=-version:refname --format=\"%(refname:short)\" --count=1 refs/tags",
+          vcpkg_path.parent_path().string()),
+        nullptr,
         [&](const std::string &, const std::string &output)
         {
           vcpkg_version = output;
@@ -34626,7 +34627,7 @@ namespace csb::utility
     return vcpkg_path;
   }
 
-  inline void bootstrap_subproject(const std::filesystem::path &path, const std::string &name, std::string version)
+  inline bool bootstrap_subproject(const std::filesystem::path &path, const std::string &name, std::string &version)
   {
     bool ran_git{};
 
@@ -34666,7 +34667,10 @@ namespace csb::utility
                                          "' tags. Return code: " + std::to_string(return_code));
               });
       execute(
-        std::format("cd {} && git describe --tags --abbrev=0", path.string()), nullptr,
+        std::format(
+          "cd {} && git for-each-ref --sort=-version:refname --format=\"%(refname:short)\" --count=1 refs/tags",
+          path.string()),
+        nullptr,
         [&](const std::string &, const std::string &output)
         {
           version = output;
@@ -34713,38 +34717,14 @@ namespace csb::utility
       touch(path);
       print<COUT>("{}\n", small_section_divider);
     }
+    return ran_git;
   }
 
   inline std::filesystem::path bootstrap_clang(std::string clang_version)
   {
-    auto clang_path{std::filesystem::path{"build"} /
-                    std::format("clang-{}", clang_version.empty() ? "latest" : clang_version)};
+    auto clang_path{std::filesystem::path{"build"} / "clang"};
+    std::string latest_version{};
     if (clang_version.empty())
-    {
-      std::string current_version{};
-      if (std::filesystem::exists(clang_path))
-      {
-        execute(
-          std::format("{}{} --version", host_platform == LINUX ? "./" : "",
-                      (clang_path / (host_platform == WINDOWS ? "clang.exe" : "clang")).string()),
-          nullptr,
-          [&](const std::string &, const std::string &output)
-          {
-            size_t pos{output.find("version ")};
-            if (pos != std::string::npos)
-            {
-              size_t end_pos{output.find_first_of(" \n", pos + 8)};
-              current_version = output.substr(pos + 8, end_pos - (pos + 8));
-            }
-          },
-          [](const std::string &, const int return_code, const std::string &output)
-          {
-            print<CERR>("{}\n", output);
-            throw std::runtime_error("Failed to get current Clang version. Return code: " +
-                                     std::to_string(return_code));
-          });
-      }
-      std::string latest_version{};
       execute(
         "curl -s https://api.github.com/repos/llvm/llvm-project/releases/latest", nullptr,
         [&](const std::string &, const std::string &output)
@@ -34758,15 +34738,35 @@ namespace csb::utility
           print<CERR>("{}\n", output);
           throw std::runtime_error("Failed to get latest Clang version. Return code: " + std::to_string(return_code));
         });
-      if (std::filesystem::exists(clang_path))
-      {
-        if (current_version == latest_version) return clang_path;
-        std::filesystem::remove_all(clang_path);
-      }
-      clang_version = latest_version;
+    std::string current_version{};
+    if (std::filesystem::exists(clang_path))
+    {
+      execute(
+        std::format("{}{} --version", host_platform == LINUX ? "./" : "",
+                    (clang_path / (host_platform == WINDOWS ? "clang.exe" : "clang")).string()),
+        nullptr,
+        [&](const std::string &, const std::string &output)
+        {
+          size_t pos{output.find("version ")};
+          if (pos != std::string::npos)
+          {
+            size_t end_pos{output.find_first_of(" \n", pos + 8)};
+            current_version = output.substr(pos + 8, end_pos - (pos + 8));
+          }
+        },
+        [](const std::string &, const int return_code, const std::string &output)
+        {
+          print<CERR>("{}\n", output);
+          throw std::runtime_error("Failed to get current Clang version. Return code: " + std::to_string(return_code));
+        });
     }
-    else if (std::filesystem::exists(clang_path))
-      return clang_path;
+    if (!current_version.empty() && current_version == clang_version) return clang_path;
+    if (clang_version.empty()) clang_version = latest_version;
+    if (!current_version.empty())
+    {
+      if (current_version == clang_version) return clang_path;
+      std::filesystem::remove_all(clang_path);
+    }
     print<COUT>("\n{}\n", small_section_divider);
 
     auto to_upper{[](std::string string)
@@ -35490,29 +35490,8 @@ namespace csb
     {
       auto [name, version, subproject_type]{subproject};
       std::string repo_name{name.substr(name.find('/') + 1)};
-      std::filesystem::path subproject_path{subproject_directory / repo_name};
-
-      auto subproject_time{std::filesystem::exists(subproject_path) ? std::filesystem::last_write_time(subproject_path)
-                                                                    : std::filesystem::file_time_type::min()};
-      auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
-                                                           : std::filesystem::file_time_type::min()};
-      auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
-                                                           : std::filesystem::file_time_type::min()};
-      if (subproject_time >= csb_cpp_time && subproject_time >= csb_hpp_time && !version.empty()) continue;
-
-      utility::bootstrap_subproject(subproject_path, name, version);
-
-      print<COUT>("\n{}\n", utility::big_section_divider);
-      if (name.empty()) throw std::runtime_error("Subproject name not set.");
-
+      auto subproject_path{subproject_directory / repo_name};
       auto build_path{subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug")};
-      if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
-      utility::live_execute(
-        std::format("cd {} && script\\build.bat", subproject_path.string()), [&repo_name, &version](const std::string &)
-        { print<COUT>("Building subproject {} ({})...\n", repo_name, version); }, nullptr,
-        [](const std::string &, const int return_code)
-        { throw std::runtime_error("Failed to build subproject. Exited with: " + std::to_string(return_code)); });
-
       if (subproject_type == STANDALONE)
         set_env("PATH", get_env("PATH", "Could not get PATH environment variable.") +
                           (host_platform == WINDOWS ? ";" : ":") + std::filesystem::absolute(build_path).string());
@@ -35524,7 +35503,30 @@ namespace csb
         if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
       }
 
-      print<COUT>("{}\n", utility::big_section_divider);
+      auto subproject_time{std::filesystem::exists(subproject_path) ? std::filesystem::last_write_time(subproject_path)
+                                                                    : std::filesystem::file_time_type::min()};
+      auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
+                                                           : std::filesystem::file_time_type::min()};
+      auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
+                                                           : std::filesystem::file_time_type::min()};
+      if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || version.empty())
+      {
+        if (!utility::bootstrap_subproject(subproject_path, name, version)) continue;
+
+        print<COUT>("\n{}\n", utility::big_section_divider);
+        if (name.empty()) throw std::runtime_error("Subproject name not set.");
+
+        if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
+        utility::live_execute(
+          std::format("cd {} && {}{}", subproject_path.string(), host_platform == LINUX ? "./" : "",
+                      (std::filesystem::path{"script"} / "build.bat").string()),
+          [&repo_name, &version](const std::string &)
+          { print<COUT>("Building subproject {} ({})...\n", repo_name, version); }, nullptr,
+          [](const std::string &, const int return_code)
+          { throw std::runtime_error("Failed to build subproject. Exited with: " + std::to_string(return_code)); });
+
+        print<COUT>("{}\n", utility::big_section_divider);
+      }
     }
   }
 
