@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.2
+// CSB 1.9.3
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35713,13 +35713,16 @@ namespace csb
 
     std::filesystem::path compile_commands_path{"compile_commands.json"};
     auto build_directory{std::filesystem::path{"build"} / (target_configuration == RELEASE ? "release" : "debug")};
-    std::string content{
-      std::format("[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
-                  "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
-                  "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2\"\n  }},\n",
-                  escape_backslashes(std::filesystem::current_path().string()),
-                  escape_backslashes((std::filesystem::current_path() / std::filesystem::path{"csb.cpp"}).string()),
-                  cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard))};
+    std::string compile_definitions{host_platform == WINDOWS ? "-D_WIN32 " : "-D__linux__ "};
+    compile_definitions += target_configuration == DEBUG ? "-D_DEBUG" : "-DNDEBUG";
+    std::string csb_output{(std::filesystem::path{"build"} / "csb.o").string()};
+    std::string content{std::format(
+      "[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
+      "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
+      "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2 {} -c csb.cpp -o {}\"\n  }},\n",
+      escape_backslashes(std::filesystem::current_path().string()),
+      escape_backslashes((std::filesystem::current_path() / std::filesystem::path{"csb.cpp"}).string()),
+      cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard), compile_definitions, csb_output)};
     for (auto iterator{source_files.begin()}; iterator != source_files.end();)
     {
       std::string compiler{};
@@ -35734,8 +35737,8 @@ namespace csb
         std::format("    \"file\": \"{}\",\n", escape_backslashes(std::filesystem::absolute(*iterator).string()));
       content += std::format("    \"command\": \"{} -Wall -Wextra -Wpedantic -Wconversion -Wshadow-all "
                              "-Wundef -Wdeprecated -Wtype-limits -Wcast-qual -Wcast-align -Wfloat-equal "
-                             "-Wunreachable-code-aggressive -Wformat=2 ",
-                             compiler);
+                             "-Wunreachable-code-aggressive -Wformat=2 {} ",
+                             compiler, compile_definitions);
       for (const auto &definition : definitions) content += std::format("-D{} ", definition);
       std::vector<std::filesystem::path> include_directories{};
       for (const auto &include_file : include_files)
@@ -35846,7 +35849,8 @@ namespace csb
       std::string compile_debug_flags{target_configuration == RELEASE ? "/O2 " : "/Od /Zi /RTC1 "};
       std::string runtime_library{target_linkage == STATIC ? (target_configuration == RELEASE ? "MT" : "MTd")
                                                            : (target_configuration == RELEASE ? "MD" : "MDd")};
-      std::string compile_definitions{};
+      std::string compile_definitions{"/D_WIN32 "};
+      compile_definitions += target_configuration == RELEASE ? "/DNDEBUG " : "/D_DEBUG ";
       for (const auto &definition : definitions) compile_definitions += std::format("/D{} ", definition);
       std::vector<std::filesystem::path> include_directories{};
       for (const auto &include_file : include_files)
@@ -35932,8 +35936,8 @@ namespace csb
             compiler = "cl /std:c17 /TC";
           else
             compiler = "cl /std:c++" + std::to_string(cxx_standard);
-          return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-                             "/Fd\"{}\" /sourceDependencies\"{}\" {}{}/c /Yc\"{}\" /Fp\"{}\" \"{}\"",
+          return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} {}/ifcOutput{}\\ /Fo{}\\ /Fd\"{}\" "
+                             "/sourceDependencies\"{}\" {}{}/c /Yc\"{}\" /Fp\"{}\" \"{}\"",
                              compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
                              compile_definitions, pch_directory.string(), pch_directory.string(),
                              (pch_directory / "(stem)_pch.pdb").string(), (pch_directory / "(stem)_pch.d").string(),
@@ -35982,8 +35986,8 @@ namespace csb
             compiler = "cl /std:c17 /TC";
           else
             compiler = "cl /std:c++" + std::to_string(cxx_standard);
-          return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} /DWIN32 /D_WINDOWS {}/ifcOutput{}\\ /Fo{}\\ "
-                             "/Fd\"{}\" /sourceDependencies\"{}\" {}{}/c {}\"()\"",
+          return std::format("{} /nologo /W{} /external:W0 {}/EHsc /MP /{} {}/ifcOutput{}\\ /Fo{}\\ /Fd\"{}\" "
+                             "/sourceDependencies\"{}\" {}{}/c {}\"()\"",
                              compiler, std::to_string(warning_level), compile_debug_flags, runtime_library,
                              compile_definitions, utility::build_directory.string(), utility::build_directory.string(),
                              (utility::build_directory / "(stem).pdb").string(),
@@ -35994,9 +35998,10 @@ namespace csb
     }
     else if (host_platform == LINUX)
     {
-      std::string compile_debug_flags{target_configuration == RELEASE ? "-O2 " : "-O0 -g "};
+      std::string compile_debug_flags{target_configuration == RELEASE ? "-O3 " : "-Og -g "};
       std::string compile_pic_flag{target_artifact == DYNAMIC_LIBRARY ? "-fPIC " : ""};
-      std::string compile_definitions{};
+      std::string compile_definitions{"-D__linux__ "};
+      compile_definitions += target_configuration == RELEASE ? "-DNDEBUG " : "-D_DEBUG ";
       for (const auto &definition : definitions) compile_definitions += std::format("-D{} ", definition);
       std::vector<std::filesystem::path> include_directories{};
       for (const auto &include_file : include_files)
