@@ -11,6 +11,6 @@ elif [ -f "csb.hpp" ] && [ "csb.hpp" -nt "build/csb" ]; then
   need_compile=true
 fi
 if [ "$need_compile" = true ]; then
-  g++ -std=c++20 -O2 -o build/csb csb.cpp
+  g++ -std=c++20 -O3 -o build/csb csb.cpp
   if [ $? -ne 0 ]; then exit $?; fi
 fi

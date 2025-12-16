@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.3
+// CSB 1.9.4
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33943,6 +33943,12 @@ enum subsystem
 {
   CONSOLE,
   WINDOW
+};
+enum subproject
+{
+  STANDALONE,
+  COMPILED_LIBRARY,
+  HEADER_LIBRARY
 };
 
 namespace csb::utility
@@ -34618,6 +34624,95 @@ namespace csb::utility
 
     print<COUT>("{}\n", small_section_divider);
     return vcpkg_path;
+  }
+
+  inline void bootstrap_subproject(const std::filesystem::path &path, const std::string &name, std::string version)
+  {
+    bool ran_git{};
+
+    if (!std::filesystem::exists(path))
+    {
+      print<COUT>("\n{}\n", small_section_divider);
+      ran_git = true;
+      live_execute(std::format("git clone --progress https://github.com/{}.git {}", name, path.string()), nullptr,
+                   nullptr,
+                   [&](const std::string &, const int return_code)
+                   {
+                     throw std::runtime_error("Failed to clone subproject '" + name +
+                                              "'. Exited with: " + std::to_string(return_code));
+                   });
+    }
+    std::string current_hash{};
+    execute(
+      std::format("cd {} && git rev-parse HEAD", path.string()), nullptr,
+      [&](const std::string &, const std::string &output)
+      {
+        current_hash = output;
+        current_hash.erase(std::remove(current_hash.begin(), current_hash.end(), '\n'), current_hash.end());
+      },
+      [&](const std::string &, const int return_code, const std::string &output)
+      {
+        print<CERR>("{}\n", output);
+        throw std::runtime_error("Failed to get subproject '" + name +
+                                 "' current version. Return code: " + std::to_string(return_code));
+      });
+    if (version.empty())
+    {
+      execute(std::format("cd {} && git fetch --tags", path.string()), nullptr, nullptr,
+              [&](const std::string &, const int return_code, const std::string &output)
+              {
+                print<CERR>("{}\n", output);
+                throw std::runtime_error("Failed to fetch subproject '" + name +
+                                         "' tags. Return code: " + std::to_string(return_code));
+              });
+      execute(
+        std::format("cd {} && git describe --tags --abbrev=0", path.string()), nullptr,
+        [&](const std::string &, const std::string &output)
+        {
+          version = output;
+          version.erase(std::remove(version.begin(), version.end(), '\n'), version.end());
+        },
+        [&](const std::string &, const int return_code, const std::string &output)
+        {
+          print<CERR>("{}\n", output);
+          throw std::runtime_error("Failed to get latest subproject '" + name +
+                                   "' tag. Return code: " + std::to_string(return_code));
+        });
+    }
+    std::string target_hash{};
+    execute(
+      std::format("cd {} && git rev-parse {}", path.string(), version), nullptr,
+      [&](const std::string &, const std::string &output)
+      {
+        target_hash = output;
+        target_hash.erase(std::remove(target_hash.begin(), target_hash.end(), '\n'), target_hash.end());
+      },
+      [&](const std::string &, const int return_code, const std::string &output)
+      {
+        print<CERR>("{}\n", output);
+        throw std::runtime_error("Failed to get subproject '" + name +
+                                 "' target version. Return code: " + std::to_string(return_code));
+      });
+    if (current_hash != target_hash)
+    {
+      if (!ran_git) print<COUT>("\n{}\n", small_section_divider);
+      ran_git = true;
+      live_execute(
+        std::format("cd {} && git -c advice.detachedHead=false checkout --progress {}", path.string(), version),
+        [&name, &version](const std::string &)
+        { print<COUT>("Checking out to subproject '{}' {}...\n", name, version); }, nullptr,
+        [&](const std::string &, const int return_code)
+        {
+          throw std::runtime_error("Failed to checkout subproject '" + name +
+                                   "' version. Exited with: " + std::to_string(return_code));
+        });
+    }
+
+    if (ran_git)
+    {
+      touch(path);
+      print<COUT>("{}\n", small_section_divider);
+    }
   }
 
   inline std::filesystem::path bootstrap_clang(std::string clang_version)
@@ -35331,8 +35426,11 @@ namespace csb
     auto manifest_path{vcpkg_path.parent_path() / "vcpkg.json"};
     auto manifest_time{std::filesystem::exists(manifest_path) ? std::filesystem::last_write_time(manifest_path)
                                                               : std::filesystem::file_time_type::min()};
-    if (manifest_time < std::filesystem::last_write_time("csb.cpp") ||
-        manifest_time < std::filesystem::last_write_time("csb.hpp") || !manifest.contains("builtin-baseline"))
+    auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
+                                                         : std::filesystem::file_time_type::min()};
+    auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
+                                                         : std::filesystem::file_time_type::min()};
+    if (manifest_time < csb_cpp_time || manifest_time < csb_hpp_time || !manifest.contains("builtin-baseline"))
       utility::live_execute(
         std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
                     vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
@@ -35374,12 +35472,13 @@ namespace csb
    *
    * This function's parameters behave as follows:
    * | `subprojects`: A list of tuples, each containing a GitHub repository name (in the format `owner/repo`), a version
-   *                  (tag), and an artifact type. If the artifact type is a library, the external_include_directories
-   *                  and library_directories are updated; if it is an executable, the PATH is updated.
+   *                  (tag), and an subproject type. If the type is a compiled library, the external_include_directories
+   *                  and library_directories are updated; if it is a header library, only external_include_directories
+   *                  are updated; if it is an executable, the PATH is updated.
    *
    * See also: `file_install`, `archive_install`, `vcpkg_install`.
    */
-  inline void subproject_install(const std::vector<std::tuple<std::string, std::string, artifact>> &subprojects)
+  inline void subproject_install(const std::vector<std::tuple<std::string, std::string, subproject>> &subprojects)
   {
     if (subprojects.empty()) throw std::runtime_error("No subprojects to install.");
     if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
@@ -35389,100 +35488,40 @@ namespace csb
 
     for (const auto &subproject : subprojects)
     {
-      print<COUT>("\n{}\n", utility::big_section_divider);
-
-      auto [name, version, artifact_type]{subproject};
-      if (name.empty()) throw std::runtime_error("Subproject name not set.");
-      if (version.empty()) throw std::runtime_error("Subproject version not set.");
-
-      bool ran_git{};
+      auto [name, version, subproject_type]{subproject};
       std::string repo_name{name.substr(name.find('/') + 1)};
       std::filesystem::path subproject_path{subproject_directory / repo_name};
-      if (!std::filesystem::exists(subproject_path))
-      {
-        utility::live_execute("git clone --progress https://github.com/" + name + ".git " + subproject_path.string(),
-                              nullptr, nullptr,
-                              [](const std::string &, const int return_code)
-                              {
-                                throw std::runtime_error("Failed to clone subproject repository. Exited with: " +
-                                                         std::to_string(return_code));
-                              });
-        ran_git = true;
-      }
-      std::string current_hash{};
-      utility::execute(
-        std::format("cd {} && git rev-parse HEAD", subproject_path.string()), nullptr,
-        [&](const std::string &, const std::string &output)
-        {
-          current_hash = output;
-          current_hash.erase(std::remove(current_hash.begin(), current_hash.end(), '\n'), current_hash.end());
-        },
-        [](const std::string &, const int return_code, const std::string &output)
-        {
-          print<CERR>("{}\n", output);
-          throw std::runtime_error("Failed to get subproject current version. Return code: " +
-                                   std::to_string(return_code));
-        });
-      std::string target_hash{};
-      utility::execute(
-        std::format("cd {} && git rev-parse {}", subproject_path.string(), version), nullptr,
-        [&](const std::string &, const std::string &output)
-        {
-          target_hash = output;
-          target_hash.erase(std::remove(target_hash.begin(), target_hash.end(), '\n'), target_hash.end());
-        },
-        [](const std::string &, const int return_code, const std::string &output)
-        {
-          print<CERR>("{}\n", output);
-          throw std::runtime_error("Failed to get subproject target version. Return code: " +
-                                   std::to_string(return_code));
-        });
-      if (current_hash != target_hash)
-      {
-        utility::live_execute(
-          std::format("cd {} && git -c advice.detachedHead=false checkout --progress {}", subproject_path.string(),
-                      version),
-          [&name, &version](const std::string &)
-          { print<COUT>("Checking out to subproject {} {}...\n", name, version); }, nullptr,
-          [](const std::string &, const int return_code)
-          {
-            throw std::runtime_error("Failed to checkout subproject version. Exited with: " +
-                                     std::to_string(return_code));
-          });
-        ran_git = true;
-      }
+
+      auto subproject_time{std::filesystem::exists(subproject_path) ? std::filesystem::last_write_time(subproject_path)
+                                                                    : std::filesystem::file_time_type::min()};
+      auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
+                                                           : std::filesystem::file_time_type::min()};
+      auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
+                                                           : std::filesystem::file_time_type::min()};
+      if (subproject_time >= csb_cpp_time && subproject_time >= csb_hpp_time && !version.empty()) continue;
+
+      utility::bootstrap_subproject(subproject_path, name, version);
+
+      print<COUT>("\n{}\n", utility::big_section_divider);
+      if (name.empty()) throw std::runtime_error("Subproject name not set.");
 
       auto build_path{subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug")};
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
-      auto upper_architecture{host_architecture};
-      std::transform(upper_architecture.begin(), upper_architecture.end(), upper_architecture.begin(),
-                     [](unsigned char c) { return std::toupper(c); });
-      std::string build_command{};
-      if (host_platform == WINDOWS)
-        build_command = std::format("cl /nologo /EHsc /std:c++{} /O2 /Fobuild\\ /c csb.cpp && link /NOLOGO /MACHINE:{} "
-                                    "/OUT:build\\csb.exe build\\csb.obj && build\\csb.exe build {}",
-                                    (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
-                                    upper_architecture, target_configuration == RELEASE ? "release" : "debug");
-      else if (host_platform == LINUX)
-        build_command = std::format("g++ -std=c++{} -O2 -o build/csb csb.cpp && build/csb build {}",
-                                    (cxx_standard < 20 ? std::to_string(20) : std::to_string(cxx_standard)),
-                                    target_configuration == RELEASE ? "release" : "debug");
       utility::live_execute(
-        std::format("cd {} && {}", subproject_path.string(), build_command),
-        [&ran_git, &repo_name, &version](const std::string &)
-        { print<COUT>("{}Building subproject {} ({})...\n", (ran_git ? "\n" : ""), repo_name, version); }, nullptr,
+        std::format("cd {} && script\\build.bat", subproject_path.string()), [&repo_name, &version](const std::string &)
+        { print<COUT>("Building subproject {} ({})...\n", repo_name, version); }, nullptr,
         [](const std::string &, const int return_code)
         { throw std::runtime_error("Failed to build subproject. Exited with: " + std::to_string(return_code)); });
 
-      if (artifact_type == EXECUTABLE)
+      if (subproject_type == STANDALONE)
         set_env("PATH", get_env("PATH", "Could not get PATH environment variable.") +
                           (host_platform == WINDOWS ? ";" : ":") + std::filesystem::absolute(build_path).string());
-      else if (artifact_type == STATIC_LIBRARY || artifact_type == DYNAMIC_LIBRARY)
+      else
       {
         std::filesystem::path include_path{subproject_path / "include"};
         if (std::filesystem::exists(include_path) && std::filesystem::is_directory(include_path))
           external_include_directories.push_back(include_path);
-        library_directories.push_back(build_path);
+        if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
       }
 
       print<COUT>("{}\n", utility::big_section_divider);
