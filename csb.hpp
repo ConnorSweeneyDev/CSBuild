@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.4
+// CSB 1.9.5
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35269,9 +35269,9 @@ namespace csb
    * Installs files from given URLS to corresponding target paths.
    *
    * This function's parameters behave as follows:
-   * | `files`: A list of tuples, each containing a URL and a target path. If all target paths already exist, the
-   *            function does nothing.
-   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every file in the list.
+   * | `files`: A single tuple or list of tuples, each containing a URL and a target path. If all target paths already
+   *            exist, the function does nothing.
+   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
    *
    * See also: `archive_install`, `vcpkg_install`, `subproject_install`.
    */
@@ -35316,15 +35316,30 @@ namespace csb
 
     print<COUT>("{}\n", utility::small_section_divider);
   }
+  /**
+   * Installs files from given URLS to corresponding target paths.
+   *
+   * This function's parameters behave as follows:
+   * | `file`: A single tuple or list of tuples, each containing a URL and a target path. If all target paths already
+   *           exist, the function does nothing.
+   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
+   *
+   * See also: `archive_install`, `vcpkg_install`, `subproject_install`.
+   */
+  inline void file_install(const std::tuple<std::string, std::filesystem::path> &file,
+                           const std::vector<std::string> &extra_arguments = {})
+  {
+    file_install(std::vector<std::tuple<std::string, std::filesystem::path>>{file}, extra_arguments);
+  }
 
   /**
    * Installs and extracts archives from given URLS to corresponding target paths.
    *
    * This function's parameters behave as follows:
-   * | `archives`: A list of tuples, each containing a URL, an extract path, and a list of target paths within the
-   *               archive to extract. If the target paths list is empty, the entire archive is extracted to the extract
-   *               path. If all extract paths already exist, the function does nothing.
-   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every archive in the list.
+   * | `archives`: A single tuple or list of tuples, each containing a URL, an extract path, and a list of target paths
+   *               within the archive to extract. If the target paths list is empty, the entire archive is extracted to
+   *               the extract path. If all extract paths already exist, the function does nothing.
+   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
    *
    * See also: `file_install`, `vcpkg_install`, `subproject_install`.
    */
@@ -35400,6 +35415,25 @@ namespace csb
       print<COUT>("done.\n{}\n", utility::small_section_divider);
     }
   }
+  /**
+   * Installs and extracts archives from given URLS to corresponding target paths.
+   *
+   * This function's parameters behave as follows:
+   * | `archive`: A single tuple or list of tuples, each containing a URL, an extract path, and a list of target paths
+   *              within the archive to extract. If the target paths list is empty, the entire archive is extracted to
+   *              the extract path. If all extract paths already exist, the function does nothing.
+   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
+   *
+   * See also: `file_install`, `vcpkg_install`, `subproject_install`.
+   */
+  inline void
+  archive_install(const std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>> &archive,
+                  const std::vector<std::string> &extra_arguments = {})
+  {
+    archive_install(
+      std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>>{archive},
+      extra_arguments);
+  }
 
   /**
    * Installs vcpkg packages using an optional version anchor.
@@ -35471,10 +35505,10 @@ namespace csb
    * Installs subprojects from given GitHub repositories at specified versions.
    *
    * This function's parameters behave as follows:
-   * | `subprojects`: A list of tuples, each containing a GitHub repository name (in the format `owner/repo`), a version
-   *                  (tag), and an subproject type. If the type is a compiled library, the external_include_directories
-   *                  and library_directories are updated; if it is a header library, only external_include_directories
-   *                  are updated; if it is an executable, the PATH is updated.
+   * | `subprojects`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
+   *                  `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
+   *                  external_include_directories and library_directories are updated; if it is a header library, only
+   *                  external_include_directories are updated; if it is an executable, the PATH is updated.
    *
    * See also: `file_install`, `archive_install`, `vcpkg_install`.
    */
@@ -35528,6 +35562,21 @@ namespace csb
         print<COUT>("{}\n", utility::big_section_divider);
       }
     }
+  }
+  /**
+   * Installs subprojects from given GitHub repositories at specified versions.
+   *
+   * This function's parameters behave as follows:
+   * | `subproject`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
+   *                 `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
+   *                 external_include_directories and library_directories are updated; if it is a header library, only
+   *                 external_include_directories are updated; if it is an executable, the PATH is updated.
+   *
+   * See also: `file_install`, `archive_install`, `vcpkg_install`.
+   */
+  inline void subproject_install(const std::tuple<std::string, std::string, subproject> &subproject)
+  {
+    subproject_install(std::vector<std::tuple<std::string, std::string, enum subproject>>{subproject});
   }
 
   /**
