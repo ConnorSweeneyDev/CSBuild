@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.5
+// CSB 1.9.6
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33519,7 +33519,7 @@ namespace csb
    * | `read_file`: Reads the contents of a specified file as a specified format.
    * | `write_file`: Writes data to a specified file in a specified format.
    * | `modify_file`: Modifies the content of a specified file using a specified modifier function.
-   * | `touch`: Updates the last modified time of a specified file or creates it if it does not exist.
+   * | `touch`: Updates the last modified time of specified files or creates them if they do not exist.
    *
    * See also: `clean` | `build` | `run`
    */
@@ -33649,7 +33649,7 @@ namespace csb
     choice.flush();
   }
 
-  // Updates the last modified time of a specified file or creates it if it does not exist.
+  // Updates the last modified time of specified files or creates them if they do not exist.
   inline void touch(const std::filesystem::path &path)
   {
     if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
@@ -33662,6 +33662,11 @@ namespace csb
       if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
       file.close();
     }
+  }
+  // Updates the last modified time of specified files or creates them if they do not exist.
+  inline void touch(const std::vector<std::filesystem::path> &paths)
+  {
+    for (const auto &path : paths) { touch(path); }
   }
 
   // Converts a byte to its hexadecimal string representation.
@@ -33721,61 +33726,48 @@ namespace csb
    * Gets a list of files from a specified directory with optional filtering and recursion.
    *
    * This functions parameters behave as follows:
-   * | `directories`: A list of directories to search for files in.
-   * | `extensions`: An optional list of file extensions to filter by.
+   * | `directories`: A list of directories to search for files in, leave empty for the current working directory.
+   * | `accept`: An optional function that takes a file path and returns true if the file should be included.
    * | `overrides`: An optional list of files to always include in the result.
-   * | `excludes`: An optional list of files to always exclude from the result.
    * | `recursive`: A true by default boolean indicating whether the directory search is recursive.
    */
-  inline std::vector<std::filesystem::path> files_from(const std::vector<std::filesystem::path> &directories,
-                                                       const std::vector<std::string> &extensions = {},
-                                                       const std::vector<std::filesystem::path> &overrides = {},
-                                                       const std::vector<std::filesystem::path> &excludes = {},
-                                                       bool recursive = true)
+  inline std::vector<std::filesystem::path>
+  choose_files(const std::vector<std::filesystem::path> &directories,
+               const std::function<bool(const std::filesystem::path &)> &accept = {},
+               const std::vector<std::filesystem::path> &overrides = {}, bool recursive = true)
   {
     std::vector<std::filesystem::path> files{};
+    auto process_directory{[&](auto iterator)
+                           {
+                             for (const auto &entry : iterator)
+                               if (entry.is_regular_file())
+                               {
+                                 if (accept && !accept(entry.path())) continue;
+                                 files.push_back(entry.path());
+                               }
+                           }};
+    if (directories.empty())
+      recursive ? process_directory(std::filesystem::recursive_directory_iterator(std::filesystem::current_path()))
+                : process_directory(std::filesystem::directory_iterator(std::filesystem::current_path()));
     for (const auto &directory : directories)
     {
       if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
         throw std::runtime_error("Directory does not exist: " + directory.string());
-
-      auto process_directory{[&](auto iterator)
-                             {
-                               for (const auto &entry : iterator)
-                                 if (entry.is_regular_file())
-                                 {
-                                   if (std::find(excludes.begin(), excludes.end(), entry.path()) != excludes.end())
-                                     continue;
-                                   if (extensions.empty())
-                                     files.push_back(entry.path().string());
-                                   else
-                                     for (const auto &extension : extensions)
-                                       if (entry.path().extension() == extension)
-                                       {
-                                         files.push_back(entry.path().string());
-                                         break;
-                                       }
-                                 }
-                             }};
-
-      if (recursive)
-        process_directory(std::filesystem::recursive_directory_iterator(directory));
-      else
-        process_directory(std::filesystem::directory_iterator(directory));
+      recursive ? process_directory(std::filesystem::recursive_directory_iterator(directory))
+                : process_directory(std::filesystem::directory_iterator(directory));
     }
-    for (const auto &override_file : overrides)
+    for (const auto &override : overrides)
     {
       bool found{};
       for (auto &file : files)
-        if (file == override_file)
+        if (file == override)
         {
           found = true;
           break;
         }
-      if (!found) files.push_back(override_file);
+      if (!found) files.push_back(override);
     }
-    std::vector<std::filesystem::path> result(files.begin(), files.end());
-    return result;
+    return files;
   }
 
   /**
@@ -34722,25 +34714,62 @@ namespace csb::utility
 
   inline std::filesystem::path bootstrap_clang(std::string clang_version)
   {
+    auto to_upper{[](std::string string)
+                  {
+                    std::transform(string.begin(), string.end(), string.begin(),
+                                   [](unsigned char character) { return std::toupper(character); });
+                    return string;
+                  }};
+
     auto clang_path{std::filesystem::path{"build"} / "clang"};
+    std::string clang_architecture{};
+    if (host_platform == WINDOWS)
+      clang_architecture = host_architecture == "x64" ? "x86_64" : "aarch64";
+    else if (host_platform == LINUX)
+      clang_architecture = to_upper(host_architecture);
+
     std::string latest_version{};
     if (clang_version.empty())
+    {
+      std::vector<std::string> versions{};
       execute(
-        "curl -s https://api.github.com/repos/llvm/llvm-project/releases/latest", nullptr,
+        "curl -s https://api.github.com/repos/llvm/llvm-project/releases?per_page=5", nullptr,
         [&](const std::string &, const std::string &output)
         {
-          auto json{nlohmann::json::parse(output)};
-          std::string tag{json["tag_name"]};
-          latest_version = tag.substr(8);
+          for (const auto &release : nlohmann::json::parse(output))
+          {
+            std::string tag{release["tag_name"]};
+            if (tag.starts_with("llvmorg-")) versions.push_back(tag.substr(8));
+          }
         },
         [](const std::string &, const int return_code, const std::string &output)
         {
-          print<CERR>("{}\n", output);
-          throw std::runtime_error("Failed to get latest Clang version. Return code: " + std::to_string(return_code));
+          print<CERR>("\n{}\n{}\n", utility::small_section_divider, output);
+          throw std::runtime_error("Failed to get Clang releases. Return code: " + std::to_string(return_code));
         });
+      for (const auto &version : versions)
+      {
+        std::filesystem::path archive{std::format(
+          "{}-{}-{}.tar.xz", host_platform == WINDOWS ? "clang+llvm" : "LLVM", version,
+          host_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture)};
+        auto url{std::format("https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}", version,
+                             archive.string())};
+        bool url_exists{};
+        execute(
+          std::format("curl -f -I -s {}", url), nullptr,
+          [&](const std::string &, const std::string &) { url_exists = true; }, nullptr);
+        if (url_exists)
+        {
+          latest_version = version;
+          break;
+        }
+      }
+      if (latest_version.empty())
+        throw std::runtime_error("\n" + utility::small_section_divider +
+                                 "\nCould not find a latest available Clang version.");
+    }
     std::string current_version{};
     if (std::filesystem::exists(clang_path))
-    {
       execute(
         std::format("{}{} --version", host_platform == LINUX ? "./" : "",
                     (clang_path / (host_platform == WINDOWS ? "clang.exe" : "clang")).string()),
@@ -34756,10 +34785,9 @@ namespace csb::utility
         },
         [](const std::string &, const int return_code, const std::string &output)
         {
-          print<CERR>("{}\n", output);
+          print<CERR>("\n{}\n{}\n", utility::small_section_divider, output);
           throw std::runtime_error("Failed to get current Clang version. Return code: " + std::to_string(return_code));
         });
-    }
     if (!current_version.empty() && current_version == clang_version) return clang_path;
     if (clang_version.empty()) clang_version = latest_version;
     if (!current_version.empty())
@@ -34769,36 +34797,24 @@ namespace csb::utility
     }
     print<COUT>("\n{}\n", small_section_divider);
 
-    auto to_upper{[](std::string string)
-                  {
-                    std::transform(string.begin(), string.end(), string.begin(),
-                                   [](unsigned char c) { return std::toupper(c); });
-                    return string;
-                  }};
-
     if (host_architecture != "x64" && host_architecture != "arm64")
       throw std::runtime_error("Clang bootstrap only supports 64 bit architectures.");
-    std::string clang_architecture{};
-    if (host_platform == WINDOWS)
-      clang_architecture = host_architecture == "x64" ? "x86_64" : "aarch64";
-    else if (host_platform == LINUX)
-      clang_architecture = to_upper(host_architecture);
     std::filesystem::path archive{
       std::format("{}-{}-{}.tar.xz", host_platform == WINDOWS ? "clang+llvm" : "LLVM", clang_version,
                   host_platform == WINDOWS ? clang_architecture + "-pc-windows-msvc" : "Linux-" + clang_architecture)};
     auto url{std::format("https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}", clang_version,
                          archive.string())};
     utility::live_execute(
-      std::format("curl -f -L -C - -o {} {}", (std::filesystem::path{"build"} / "temp.tar.xz").string(), url),
+      std::format("curl -f -L -C - -o {} {}", (std::filesystem::path{"build"} / "clang.tar.xz").string(), url),
       [&url](const std::string &) { print<COUT>("Downloading archive at '{}'...\n", url); }, nullptr,
       [](const std::string &, const int return_code)
       { throw std::runtime_error("Failed to download clang archive. Exited with: " + std::to_string(return_code)); });
     utility::live_execute(
-      std::format("tar -xf {} -C build", (std::filesystem::path{"build"} / "temp.tar.xz").string()),
+      std::format("tar -xf {} -C build", (std::filesystem::path{"build"} / "clang.tar.xz").string()),
       [&clang_path](const std::string &) { print<COUT>("Extracting archive to '{}'... ", clang_path.string()); },
       nullptr, [](const std::string &, const int return_code)
       { throw std::runtime_error("Failed to extract clang archive. Exited with: " + std::to_string(return_code)); });
-    std::filesystem::remove(std::filesystem::path{"build"} / "temp.tar.xz");
+    std::filesystem::remove(std::filesystem::path{"build"} / "clang.tar.xz");
     auto extracted_path{"build" / archive.stem().stem()};
     if (!std::filesystem::exists(extracted_path))
       throw std::runtime_error("Failed to find " + extracted_path.string() + ".");
@@ -35875,11 +35891,11 @@ namespace csb
     auto format_directory{std::filesystem::path{"build"} / "format"};
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
     std::vector<std::filesystem::path> format_files{};
-    format_files.reserve(source_files.size() + include_files.size() + overrides.size() + 1);
+    format_files.reserve(1 + source_files.size() + include_files.size() + overrides.size());
+    format_files.push_back("csb.cpp");
     format_files.insert(format_files.end(), source_files.begin(), source_files.end());
     format_files.insert(format_files.end(), include_files.begin(), include_files.end());
     format_files.insert(format_files.end(), overrides.begin(), overrides.end());
-    format_files.push_back("csb.cpp");
     if (!excludes.empty())
       format_files.erase(
         std::remove_if(format_files.begin(), format_files.end(), [&](const std::filesystem::path &path)
@@ -35910,7 +35926,7 @@ namespace csb
   }
 
   // Removes the specified files.
-  inline void remove_files(const std::vector<std::filesystem::path> &files)
+  inline void remove(const std::vector<std::filesystem::path> &files)
   {
     if (files.empty()) throw std::runtime_error("No files to remove.");
 
