@@ -34821,7 +34821,8 @@ namespace csb::utility
 
     if (!std::filesystem::exists(clang_path)) std::filesystem::create_directories(clang_path);
     for (const auto &entry : std::filesystem::directory_iterator(extracted_path / "bin"))
-      if (entry.is_regular_file()) std::filesystem::rename(entry.path(), clang_path / entry.path().filename());
+      if (entry.is_regular_file() || entry.is_symlink())
+        std::filesystem::rename(entry.path(), clang_path / entry.path().filename());
     std::filesystem::remove_all(extracted_path);
     print<COUT>("done.\n{}\n", small_section_divider);
 
