@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.9
+// CSB 1.9.10
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33824,6 +33824,7 @@ namespace csb
         }
       if (!found) files.push_back(override);
     }
+    for (auto &file : files) file.make_preferred();
     return files;
   }
 
@@ -34965,15 +34966,14 @@ namespace csb
    */
   inline void task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &)>> &task,
-    const std::vector<std::filesystem::path> &check_files)
+    std::vector<std::filesystem::path> check_files)
   {
     bool any_missing{};
-    for (const auto &check_file : check_files)
-      if (!std::filesystem::exists(check_file))
-      {
-        any_missing = true;
-        break;
-      }
+    for (auto &check_file : check_files)
+    {
+      check_file.make_preferred();
+      if (!any_missing && !std::filesystem::exists(check_file)) any_missing = true;
+    }
     if (!any_missing) return;
     print<COUT>("\n{}\n", utility::small_section_divider);
 
@@ -35028,10 +35028,12 @@ namespace csb
   inline void task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &,
                                                               const std::vector<std::filesystem::path> &)>> &task,
-    const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
+    std::vector<std::filesystem::path> target_files, std::vector<std::filesystem::path> check_files,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
       &dependency_handler = {})
   {
+    for (auto &target_file : target_files) target_file.make_preferred();
+    for (auto &check_file : check_files) check_file.make_preferred();
     auto modified_files{utility::find_modified_files(target_files, check_files, dependency_handler)};
     if (modified_files.empty()) return;
     print<COUT>("\n{}\n", utility::small_section_divider);
@@ -35094,11 +35096,14 @@ namespace csb
   inline void multi_task_run(
     const std::variant<std::string, std::function<std::string(const std::filesystem::path &,
                                                               const std::vector<std::filesystem::path> &)>> &task,
-    const std::vector<std::filesystem::path> &check_files)
+    std::vector<std::filesystem::path> check_files)
   {
     std::vector<std::filesystem::path> target_files{};
-    for (const auto &file : check_files)
+    for (auto &file : check_files)
+    {
+      file.make_preferred();
       if (!std::filesystem::exists(file)) target_files.push_back(file);
+    }
     if (target_files.empty()) return;
     print<COUT>("\n{}", utility::small_section_divider);
 
@@ -35156,10 +35161,12 @@ namespace csb
     const std::variant<
       std::string, std::function<std::string(const std::filesystem::path &, const std::vector<std::filesystem::path> &,
                                              const std::vector<std::filesystem::path> &)>> &task,
-    const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
+    std::vector<std::filesystem::path> target_files, std::vector<std::filesystem::path> check_files,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
       &dependency_handler = {})
   {
+    for (auto &target_file : target_files) target_file.make_preferred();
+    for (auto &check_file : check_files) check_file.make_preferred();
     auto modified_files{utility::find_modified_files(target_files, check_files, dependency_handler)};
     if (modified_files.empty()) return;
     print<COUT>("\n{}", utility::small_section_divider);
@@ -35237,15 +35244,14 @@ namespace csb
    */
   inline void live_task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &)>> &task,
-    const std::vector<std::filesystem::path> &check_files)
+    std::vector<std::filesystem::path> check_files)
   {
     bool any_missing{};
-    for (const auto &check_file : check_files)
-      if (!std::filesystem::exists(check_file))
-      {
-        any_missing = true;
-        break;
-      }
+    for (auto &check_file : check_files)
+    {
+      check_file.make_preferred();
+      if (!any_missing && !std::filesystem::exists(check_file)) any_missing = true;
+    }
     if (!any_missing) return;
     print<COUT>("\n{}\n", utility::small_section_divider);
 
@@ -35295,10 +35301,12 @@ namespace csb
   inline void live_task_run(
     const std::variant<std::string, std::function<std::string(const std::vector<std::filesystem::path> &,
                                                               const std::vector<std::filesystem::path> &)>> &task,
-    const std::vector<std::filesystem::path> &target_files, const std::vector<std::filesystem::path> &check_files,
+    std::vector<std::filesystem::path> target_files, std::vector<std::filesystem::path> check_files,
     const std::function<bool(const std::filesystem::path &, const std::vector<std::filesystem::path> &)>
       &dependency_handler = {})
   {
+    for (auto &target_file : target_files) target_file.make_preferred();
+    for (auto &check_file : check_files) check_file.make_preferred();
     auto modified_files{utility::find_modified_files(target_files, check_files, dependency_handler)};
     if (modified_files.empty()) return;
     print<COUT>("\n{}\n", utility::small_section_divider);
@@ -35965,6 +35973,8 @@ namespace csb
   inline void clang_format(const std::string &clang_version = {}, std::vector<std::filesystem::path> overrides = {},
                            std::vector<std::filesystem::path> excludes = {})
   {
+    for (auto &file : source_files) file.make_preferred();
+    for (auto &file : include_files) file.make_preferred();
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
 
     auto format_directory{std::filesystem::path{"build"} / "format"};
@@ -36007,6 +36017,12 @@ namespace csb
   // Compiles the project source files into corresponding object files and selected headers into precompiled headers.
   inline void compile()
   {
+    for (auto &file : source_files) file.make_preferred();
+    for (auto &file : include_files) file.make_preferred();
+    for (auto &file : precompiled_headers) file.make_preferred();
+    for (auto &dir : external_include_directories) dir.make_preferred();
+    for (auto &dir : library_directories) dir.make_preferred();
+
     if (target_name.empty()) throw std::runtime_error("Executable name not set.");
     if (source_files.empty()) throw std::runtime_error("No source files to compile.");
     if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
@@ -36313,7 +36329,8 @@ namespace csb
   // Links compiled object files into the final target artifact.
   inline void link()
   {
-    if (!std::filesystem::exists(utility::build_directory)) throw std::runtime_error("Link called before compile.");
+    if (utility::build_directory.string().empty() || !std::filesystem::exists(utility::build_directory))
+      throw std::runtime_error("Link called before compile.");
 
     if (host_platform == WINDOWS)
     {
