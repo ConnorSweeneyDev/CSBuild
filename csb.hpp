@@ -33706,8 +33706,7 @@ namespace csb
   }
 
   // Updates the last modified time of specified files or creates them if they do not exist.
-  template <typename... paths>
-  inline void touch(const std::filesystem::path &first, const paths &...rest)
+  template <typename... paths> inline void touch(const std::filesystem::path &first, const paths &...rest)
   {
     auto process{[](const std::filesystem::path &path)
                  {
@@ -33754,15 +33753,14 @@ namespace csb
   }
 
   // Removes the specified files.
-  template <typename... paths>
-  inline void remove(const std::filesystem::path &first, const paths &...rest)
+  template <typename... paths> inline void remove(const std::filesystem::path &first, const paths &...rest)
   {
     print<COUT>("\n{}\nRemoving files...\n", utility::small_section_divider);
     auto process{[](const std::filesystem::path &path)
                  {
-                    print<COUT>("{}... ", path.string());
-                    if (std::filesystem::exists(path)) std::filesystem::remove_all(path);
-                    print<COUT>("done.\n");
+                   print<COUT>("{}... ", path.string());
+                   if (std::filesystem::exists(path)) std::filesystem::remove_all(path);
+                   print<COUT>("done.\n");
                  }};
     process(first);
     (..., process(rest));
