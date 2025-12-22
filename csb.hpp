@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.4
+// CSB 1.10.5
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35614,8 +35614,8 @@ namespace csb
         if (name.empty()) throw std::runtime_error("Subproject name not set.");
         if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
         utility::live_execute(
-          std::format("cd {} && {}{} {}", subproject_path.string(), host_platform == LINUX ? "./" : "",
-                      (std::filesystem::path{"script"} / "build.bat").string(),
+          std::format("cd {} && {}{}{} {}", subproject_path.string(), host_platform == LINUX ? "./" : "",
+                      (std::filesystem::path{"script"} / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh",
                       target_configuration == RELEASE ? "release" : "debug"),
           [&repo_name, &version](const std::string &)
           { print<COUT>("Building subproject {} ({})...\n", repo_name, version); },
