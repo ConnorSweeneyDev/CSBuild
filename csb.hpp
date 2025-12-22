@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.6
+// CSB 1.9.7
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35548,7 +35548,7 @@ namespace csb
                           (host_platform == WINDOWS ? ";" : ":") + std::filesystem::absolute(build_path).string());
       else
       {
-        std::filesystem::path include_path{subproject_path / "include"};
+        auto include_path{subproject_path / "build" / "include"};
         if (std::filesystem::exists(include_path) && std::filesystem::is_directory(include_path))
           external_include_directories.push_back(include_path);
         if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
