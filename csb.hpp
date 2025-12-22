@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.10
+// CSB 1.10.0
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33706,23 +33706,24 @@ namespace csb
   }
 
   // Updates the last modified time of specified files or creates them if they do not exist.
-  inline void touch(const std::filesystem::path &path)
+  template <typename... paths>
+  inline void touch(const std::filesystem::path &first, const paths &...rest)
   {
-    if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
-      std::filesystem::create_directories(path.parent_path());
-    if (std::filesystem::exists(path))
-      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
-    else
-    {
-      std::ofstream file(path, std::ios::app);
-      if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
-      file.close();
-    }
-  }
-  // Updates the last modified time of specified files or creates them if they do not exist.
-  inline void touch(const std::vector<std::filesystem::path> &paths)
-  {
-    for (const auto &path : paths) { touch(path); }
+    auto process{[](const std::filesystem::path &path)
+                 {
+                   if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
+                     std::filesystem::create_directories(path.parent_path());
+                   if (std::filesystem::exists(path))
+                     std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
+                   else
+                   {
+                     std::ofstream file(path, std::ios::app);
+                     if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
+                     file.close();
+                   }
+                 }};
+    process(first);
+    (..., process(rest));
   }
 
   // Copies the specified files to the destination.
@@ -33736,11 +33737,6 @@ namespace csb
                             std::filesystem::copy_options::overwrite_existing |
                               std::filesystem::copy_options::recursive);
     }
-  }
-  // Copies the specified files to the destination.
-  inline void copy(const std::filesystem::path &source, const std::filesystem::path &destination)
-  {
-    copy(std::vector<std::filesystem::path>{source}, destination);
   }
 
   // Moves the specified files to the destination.
@@ -33756,28 +33752,22 @@ namespace csb
       std::filesystem::remove_all(source);
     }
   }
-  // Moves the specified files to the destination.
-  inline void move(const std::filesystem::path &source, const std::filesystem::path &destination)
-  {
-    move(std::vector<std::filesystem::path>{source}, destination);
-  }
 
   // Removes the specified files.
-  inline void remove(const std::vector<std::filesystem::path> &files)
+  template <typename... paths>
+  inline void remove(const std::filesystem::path &first, const paths &...rest)
   {
-    if (files.empty()) throw std::runtime_error("No files to remove.");
-
     print<COUT>("\n{}\nRemoving files...\n", utility::small_section_divider);
-    for (const auto &file : files)
-    {
-      print<COUT>("{}... ", file.string());
-      if (std::filesystem::exists(file)) std::filesystem::remove_all(file);
-      print<COUT>("done.\n");
-    }
+    auto process{[](const std::filesystem::path &path)
+                 {
+                    print<COUT>("{}... ", path.string());
+                    if (std::filesystem::exists(path)) std::filesystem::remove_all(path);
+                    print<COUT>("done.\n");
+                 }};
+    process(first);
+    (..., process(rest));
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
-  // Removes the specified files.
-  inline void remove(const std::filesystem::path &file) { remove(std::vector<std::filesystem::path>{file}); }
 
   /**
    * Gets a list of files from a specified directory with optional filtering and recursion.
