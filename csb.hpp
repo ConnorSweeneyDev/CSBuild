@@ -33728,10 +33728,10 @@ namespace csb
   // Copies the specified files to the destination.
   inline void copy(const std::vector<std::filesystem::path> &sources, const std::filesystem::path &destination)
   {
+    if (!std::filesystem::exists(destination)) std::filesystem::create_directories(destination);
     for (const auto &source : sources)
     {
-      if (!std::filesystem::exists(source))
-        throw std::runtime_error("Source file does not exist: " + source.string());
+      if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
       std::filesystem::copy(source, destination / source.filename(),
                             std::filesystem::copy_options::overwrite_existing |
                               std::filesystem::copy_options::recursive);
@@ -33746,10 +33746,10 @@ namespace csb
   // Moves the specified files to the destination.
   inline void move(const std::vector<std::filesystem::path> &sources, const std::filesystem::path &destination)
   {
+    if (!std::filesystem::exists(destination)) std::filesystem::create_directories(destination);
     for (const auto &source : sources)
     {
-      if (!std::filesystem::exists(source))
-        throw std::runtime_error("Source file does not exist: " + source.string());
+      if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
       std::filesystem::copy(source, destination / source.filename(),
                             std::filesystem::copy_options::overwrite_existing |
                               std::filesystem::copy_options::recursive);
@@ -33777,10 +33777,7 @@ namespace csb
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
   // Removes the specified files.
-  inline void remove(const std::filesystem::path &file)
-  {
-    remove(std::vector<std::filesystem::path>{file});
-  }
+  inline void remove(const std::filesystem::path &file) { remove(std::vector<std::filesystem::path>{file}); }
 
   /**
    * Gets a list of files from a specified directory with optional filtering and recursion.
