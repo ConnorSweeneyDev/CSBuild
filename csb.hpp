@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.9.7
+// CSB 1.9.8
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35544,13 +35544,34 @@ namespace csb
       auto subproject_path{subproject_directory / repo_name};
       auto build_path{subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug")};
       if (subproject_type == STANDALONE)
-        set_env("PATH", get_env("PATH", "Could not get PATH environment variable.") +
-                          (host_platform == WINDOWS ? ";" : ":") + std::filesystem::absolute(build_path).string());
+        append_environment_variable("PATH", std::filesystem::absolute(build_path).string());
       else
       {
         auto include_path{subproject_path / "build" / "include"};
         if (std::filesystem::exists(include_path) && std::filesystem::is_directory(include_path))
           external_include_directories.push_back(include_path);
+        auto vcpkg_path{subproject_path / "build" / "vcpkg_installed"};
+        if (std::filesystem::exists(vcpkg_path) && std::filesystem::is_directory(vcpkg_path))
+        {
+          std::string vcpkg_triplet{};
+          if (host_platform == WINDOWS)
+            vcpkg_triplet =
+              std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
+                          (target_configuration == RELEASE ? "-release" : ""));
+          else if (host_platform == LINUX)
+            vcpkg_triplet = std::format("{}-linux", host_architecture);
+          auto vcpkg_include_directory{vcpkg_path / vcpkg_triplet / "include"};
+          auto vcpkg_library_directory{
+            vcpkg_path / vcpkg_triplet /
+            (target_configuration == RELEASE ? "lib" : std::filesystem::path{"debug"} / "lib")};
+          if (std::filesystem::exists(vcpkg_include_directory) &&
+              std::filesystem::is_directory(vcpkg_include_directory))
+            external_include_directories.push_back(vcpkg_include_directory);
+          if (subproject_type == COMPILED_LIBRARY)
+            if (std::filesystem::exists(vcpkg_library_directory) &&
+                std::filesystem::is_directory(vcpkg_library_directory))
+              library_directories.push_back(vcpkg_library_directory);
+        }
         if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
       }
 
