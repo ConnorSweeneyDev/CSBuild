@@ -5,8 +5,6 @@
 .vs/
 
 # Build Output
-test/build/
-test/compile_commands.json
 compile_commands.json
 
 # User Files

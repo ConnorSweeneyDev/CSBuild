@@ -35535,8 +35535,7 @@ namespace csb
     auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
                                                          : std::filesystem::file_time_type::min()};
     if (!std::filesystem::exists(vcpkg_installed_directory) || manifest_time < csb_cpp_time ||
-        manifest_time < csb_hpp_time || !manifest.contains("builtin-baseline") ||
-        utility::forced_configuration.has_value())
+        manifest_time < csb_hpp_time || !manifest.contains("builtin-baseline"))
       utility::live_execute(
         std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
                     vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
@@ -35607,8 +35606,7 @@ namespace csb
                                                            : std::filesystem::file_time_type::min()};
       auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
                                                            : std::filesystem::file_time_type::min()};
-      if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped ||
-          utility::forced_configuration.has_value())
+      if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped)
       {
         print<COUT>("\n{}\n", utility::big_section_divider);
         if (name.empty()) throw std::runtime_error("Subproject name not set.");
