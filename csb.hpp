@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.7
+// CSB 1.10.8
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35540,7 +35540,7 @@ namespace csb
                                                          : std::filesystem::file_time_type::min()};
     if (!std::filesystem::exists(vcpkg_installed_directory) || !std::filesystem::exists(outputs.first) ||
         !std::filesystem::exists(outputs.second) || manifest_time < csb_cpp_time || manifest_time < csb_hpp_time ||
-        !manifest.contains("builtin-baseline"))
+        !manifest.contains("builtin-baseline") || is_subproject)
       utility::live_execute(
         std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
                     vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
@@ -35608,7 +35608,7 @@ namespace csb
       auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
                                                            : std::filesystem::file_time_type::min()};
       if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped ||
-          !std::filesystem::exists(build_path))
+          !std::filesystem::exists(build_path) || is_subproject)
       {
         print<COUT>("\n{}\n", utility::big_section_divider);
         if (name.empty()) throw std::runtime_error("Subproject name not set.");
