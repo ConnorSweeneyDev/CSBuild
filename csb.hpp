@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.6
+// CSB 1.10.7
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -35527,6 +35527,10 @@ namespace csb
     else if (host_platform == LINUX)
       vcpkg_triplet = std::format("{}-linux", host_architecture);
     auto vcpkg_installed_directory{std::filesystem::path{"build"} / "vcpkg_installed"};
+    std::pair<std::filesystem::path, std::filesystem::path> outputs{
+      vcpkg_installed_directory / vcpkg_triplet / "include",
+      vcpkg_installed_directory / vcpkg_triplet /
+        (target_configuration == RELEASE ? "lib" : std::filesystem::path{"debug"} / "lib")};
     auto manifest_path{vcpkg_path.parent_path() / "vcpkg.json"};
     auto manifest_time{std::filesystem::exists(manifest_path) ? std::filesystem::last_write_time(manifest_path)
                                                               : std::filesystem::file_time_type::min()};
@@ -35534,8 +35538,9 @@ namespace csb
                                                          : std::filesystem::file_time_type::min()};
     auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
                                                          : std::filesystem::file_time_type::min()};
-    if (!std::filesystem::exists(vcpkg_installed_directory) || manifest_time < csb_cpp_time ||
-        manifest_time < csb_hpp_time || !manifest.contains("builtin-baseline"))
+    if (!std::filesystem::exists(vcpkg_installed_directory) || !std::filesystem::exists(outputs.first) ||
+        !std::filesystem::exists(outputs.second) || manifest_time < csb_cpp_time || manifest_time < csb_hpp_time ||
+        !manifest.contains("builtin-baseline"))
       utility::live_execute(
         std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
                     vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
@@ -35550,10 +35555,6 @@ namespace csb
         [](const std::string &, const int return_code)
         { throw std::runtime_error("Failed to install vcpkg packages. Exited with: " + std::to_string(return_code)); });
 
-    std::pair<std::filesystem::path, std::filesystem::path> outputs{
-      vcpkg_installed_directory / vcpkg_triplet / "include",
-      vcpkg_installed_directory / vcpkg_triplet /
-        (target_configuration == RELEASE ? "lib" : std::filesystem::path{"debug"} / "lib")};
     if (std::filesystem::exists(outputs.first)) external_include_directories.push_back(outputs.first);
     if (std::filesystem::exists(outputs.second)) library_directories.push_back(outputs.second);
   }
@@ -35606,7 +35607,8 @@ namespace csb
                                                            : std::filesystem::file_time_type::min()};
       auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
                                                            : std::filesystem::file_time_type::min()};
-      if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped)
+      if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped ||
+          !std::filesystem::exists(build_path))
       {
         print<COUT>("\n{}\n", utility::big_section_divider);
         if (name.empty()) throw std::runtime_error("Subproject name not set.");
