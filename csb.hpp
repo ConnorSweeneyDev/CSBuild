@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.11
+// CSB 1.10.12
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33713,6 +33713,11 @@ namespace csb
         if (seen.insert(element).second) { result.push_back(element); }
     return result;
   }
+  // Combines multiple lists into one, removing duplicates and preserving order.
+  template <typename type> std::vector<type> combine(std::initializer_list<std::vector<type>> vectors)
+  {
+    return combine(std::vector<std::vector<type>>{vectors});
+  }
 
   // Updates the last modified time of specified directories or creates them if they do not exist.
   inline void mkdir(const std::filesystem::path &path)
@@ -33726,6 +33731,11 @@ namespace csb
   inline void mkdir(const std::vector<std::filesystem::path> &paths)
   {
     for (const auto &path : paths) mkdir(path);
+  }
+  // Updates the last modified time of specified directories or creates them if they do not exist.
+  inline void mkdir(std::initializer_list<std::filesystem::path> paths)
+  {
+    mkdir(std::vector<std::filesystem::path>{paths});
   }
 
   // Updates the last modified time of specified files or creates them if they do not exist.
@@ -33747,6 +33757,11 @@ namespace csb
   {
     for (const auto &path : paths) touch(path);
   }
+  // Updates the last modified time of specified files or creates them if they do not exist.
+  inline void touch(std::initializer_list<std::filesystem::path> paths)
+  {
+    touch(std::vector<std::filesystem::path>{paths});
+  }
 
   // Copies the specified files to the destination.
   inline void copy(const std::filesystem::path &source, const std::filesystem::path &destination)
@@ -33760,6 +33775,11 @@ namespace csb
   inline void copy(const std::vector<std::filesystem::path> &sources, const std::filesystem::path &destination)
   {
     for (const auto &source : sources) csb::copy(source, destination);
+  }
+  // Copies the specified files to the destination.
+  inline void copy(std::initializer_list<std::filesystem::path> sources, const std::filesystem::path &destination)
+  {
+    copy(std::vector<std::filesystem::path>{sources}, destination);
   }
 
   // Moves the specified files to the destination.
@@ -33775,6 +33795,11 @@ namespace csb
   inline void move(const std::vector<std::filesystem::path> &sources, const std::filesystem::path &destination)
   {
     for (const auto &source : sources) move(source, destination);
+  }
+  // Moves the specified files to the destination.
+  inline void move(std::initializer_list<std::filesystem::path> sources, const std::filesystem::path &destination)
+  {
+    move(std::vector<std::filesystem::path>{sources}, destination);
   }
 
   // Renames the specified file or directory.
@@ -33793,6 +33818,11 @@ namespace csb
   inline void remove(const std::vector<std::filesystem::path> &paths)
   {
     for (const auto &path : paths) csb::remove(path);
+  }
+  // Removes the specified files.
+  inline void remove(std::initializer_list<std::filesystem::path> paths)
+  {
+    remove(std::vector<std::filesystem::path>{paths});
   }
 
   // Returns a preferred version of a path given to it.
@@ -36071,6 +36101,11 @@ namespace csb
       print<COUT>("done.\n");
     }
     print<COUT>("done.\n{}\n", utility::small_section_divider);
+  }
+  // Cleans the specified files.
+  inline void clean(std::initializer_list<std::filesystem::path> files)
+  {
+    clean(std::vector<std::filesystem::path>{files});
   }
   // Cleans the specified files.
   inline void clean(const std::filesystem::path &file) { clean(std::vector<std::filesystem::path>{file}); }
