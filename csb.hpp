@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.13
+// CSB 1.10.14
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33524,6 +33524,8 @@ namespace csb
    * | `prepend_environment_variable`: Prepends a value to a specified environment variable.
    * | `byte_to_hex`: Converts a byte to its hexadecimal string representation.
    * | `exists`: Checks if specified files or directories exist.
+   * | `directory`: Returns a directory iterator for a specified directory.
+   * | `directory_recurse`: Returns a recursive directory iterator for a specified directory.
    * | `mkdir`: Updates the last modified time of specified directories or creates them if they do not exist.
    * | `touch`: Updates the last modified time of specified files or creates them if they do not exist.
    * | `copy`: Copies specified files to a specified directory.
@@ -33733,6 +33735,22 @@ namespace csb
   inline bool exists(std::initializer_list<std::filesystem::path> paths)
   {
     return exists(std::vector<std::filesystem::path>{paths});
+  }
+
+  // Returns a directory iterator for a specified directory.
+  inline std::filesystem::directory_iterator directory(const std::filesystem::path &path)
+  {
+    if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path))
+      throw std::runtime_error("Directory does not exist or is not a directory: " + path.string());
+    return std::filesystem::directory_iterator{path};
+  }
+
+  // Returns a recursive directory iterator for a specified directory.
+  inline std::filesystem::recursive_directory_iterator directory_recurse(const std::filesystem::path &path)
+  {
+    if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path))
+      throw std::runtime_error("Directory does not exist or is not a directory: " + path.string());
+    return std::filesystem::recursive_directory_iterator{path};
   }
 
   // Updates the last modified time of specified directories or creates them if they do not exist.
