@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.10
+// CSB 1.10.11
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -36531,10 +36531,11 @@ namespace csb
                     utility::small_section_divider, return_code);
       });
   }
+
+  constexpr auto success{EXIT_SUCCESS};
+  constexpr auto failure{EXIT_FAILURE};
 }
 
-#define CSB_SUCCESS EXIT_SUCCESS
-#define CSB_FAILURE EXIT_FAILURE
 #define CSB_MAIN()                                                                                                     \
   int main(int argc, char *argv[])                                                                                     \
   {                                                                                                                    \
@@ -36569,6 +36570,6 @@ namespace csb
     catch (const std::exception &exception)                                                                            \
     {                                                                                                                  \
       csb::print<CERR>("{}\n", exception.what());                                                                      \
-      return CSB_FAILURE;                                                                                              \
+      return csb::failure;                                                                                             \
     }                                                                                                                  \
   }
