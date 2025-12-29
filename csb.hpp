@@ -33797,8 +33797,6 @@ namespace csb
 
   // Returns a preferred version of a path given to it.
   inline std::filesystem::path path(const std::string &input) { return std::filesystem::path{input}.make_preferred(); }
-  // Returns a preferred version of a path given to it.
-  inline std::filesystem::path path(const std::filesystem::path &input) { return path(input.string()); }
 
   /**
    * Gets a list of files from a specified directory with optional filtering and recursion.
