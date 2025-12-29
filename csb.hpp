@@ -35623,94 +35623,6 @@ namespace csb
    * Installs subprojects from given GitHub repositories at specified versions.
    *
    * This function's parameters behave as follows:
-   * | `subprojects`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
-   *                  `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
-   *                  external_include_directories and library_directories are updated; if it is a header library, only
-   *                  external_include_directories are updated; if it is standalone, the PATH is updated.
-   *
-   * See also: `file_install`, `archive_install`, `vcpkg_install`.
-   */
-  inline void subproject_install(const std::vector<std::tuple<std::string, std::string, subproject>> &subprojects)
-  {
-    if (subprojects.empty()) throw std::runtime_error("No subprojects to install.");
-    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
-
-    auto subproject_directory{std::filesystem::path{"build"} / "subproject"};
-    if (!std::filesystem::exists(subproject_directory)) std::filesystem::create_directories(subproject_directory);
-
-    for (const auto &subproject : subprojects)
-    {
-      auto [name, version, subproject_type]{subproject};
-      std::string repo_name{name.substr(name.find('/') + 1)};
-      auto subproject_path{subproject_directory / repo_name};
-      auto build_path{subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug")};
-
-      auto bootstrapped = utility::bootstrap_subproject(subproject_path, name, version);
-
-      auto subproject_time{std::filesystem::exists(subproject_path) ? std::filesystem::last_write_time(subproject_path)
-                                                                    : std::filesystem::file_time_type::min()};
-      auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
-                                                           : std::filesystem::file_time_type::min()};
-      auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
-                                                           : std::filesystem::file_time_type::min()};
-      if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped ||
-          !std::filesystem::exists(build_path) || is_subproject)
-      {
-        print<COUT>("\n{}\n", utility::big_section_divider);
-        if (name.empty()) throw std::runtime_error("Subproject name not set.");
-        if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
-        utility::live_execute(
-          std::format("cd {} && {}{}{} {}", subproject_path.string(), host_platform == LINUX ? "./" : "",
-                      (std::filesystem::path{"script"} / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh",
-                      target_configuration == RELEASE ? "release" : "debug"),
-          [&repo_name, &version](const std::string &)
-          { print<COUT>("Building subproject {} ({})...\n", repo_name, version); },
-          [&subproject_path](const std::string &)
-          {
-            touch(subproject_path);
-            print<COUT>("{}\n", utility::big_section_divider);
-          },
-          [](const std::string &, const int return_code)
-          { throw std::runtime_error("Failed to build subproject. Exited with: " + std::to_string(return_code)); });
-      }
-
-      if (subproject_type == STANDALONE)
-        append_environment_variable("PATH", std::filesystem::absolute(build_path).string());
-      else
-      {
-        auto include_path{subproject_path / "build" / "include"};
-        if (std::filesystem::exists(include_path) && std::filesystem::is_directory(include_path))
-          external_include_directories.push_back(include_path);
-        auto vcpkg_path{subproject_path / "build" / "vcpkg_installed"};
-        if (std::filesystem::exists(vcpkg_path) && std::filesystem::is_directory(vcpkg_path))
-        {
-          std::string vcpkg_triplet{};
-          if (host_platform == WINDOWS)
-            vcpkg_triplet =
-              std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
-                          (target_configuration == RELEASE ? "-release" : ""));
-          else if (host_platform == LINUX)
-            vcpkg_triplet = std::format("{}-linux", host_architecture);
-          auto vcpkg_include_directory{vcpkg_path / vcpkg_triplet / "include"};
-          auto vcpkg_library_directory{
-            vcpkg_path / vcpkg_triplet /
-            (target_configuration == RELEASE ? "lib" : std::filesystem::path{"debug"} / "lib")};
-          if (std::filesystem::exists(vcpkg_include_directory) &&
-              std::filesystem::is_directory(vcpkg_include_directory))
-            external_include_directories.push_back(vcpkg_include_directory);
-          if (subproject_type == COMPILED_LIBRARY)
-            if (std::filesystem::exists(vcpkg_library_directory) &&
-                std::filesystem::is_directory(vcpkg_library_directory))
-              library_directories.push_back(vcpkg_library_directory);
-        }
-        if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
-      }
-    }
-  }
-  /**
-   * Installs subprojects from given GitHub repositories at specified versions.
-   *
-   * This function's parameters behave as follows:
    * | `subproject`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
    *                 `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
    *                 external_include_directories and library_directories are updated; if it is a header library, only
@@ -35787,6 +35699,21 @@ namespace csb
       }
       if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
     }
+  }
+  /**
+   * Installs subprojects from given GitHub repositories at specified versions.
+   *
+   * This function's parameters behave as follows:
+   * | `subprojects`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
+   *                  `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
+   *                  external_include_directories and library_directories are updated; if it is a header library, only
+   *                  external_include_directories are updated; if it is standalone, the PATH is updated.
+   *
+   * See also: `file_install`, `archive_install`, `vcpkg_install`.
+   */
+  inline void subproject_install(const std::vector<std::tuple<std::string, std::string, subproject>> &subprojects)
+  {
+    for (const auto &subproject : subprojects) subproject_install(subproject);
   }
 
   /**
