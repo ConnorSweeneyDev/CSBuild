@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.8
+// CSB 1.10.9
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33450,6 +33450,11 @@ namespace csb
                                                      "-------------------------------------------------------";
 
     template <typename container>
+    concept iterable = requires(container &type) {
+      std::begin(type);
+      std::end(type);
+    };
+    template <typename container>
     concept iterable_string = requires(container &type) {
       std::begin(type);
       std::end(type);
@@ -33487,7 +33492,7 @@ namespace csb
    * | `target_name`: The name of the target.
    * | `target_artifact`: The artifact type of the target (executable, library, etc.).
    * | `target_linkage`: The linkage type of the target (static or dynamic).
-   * | `target_subsystem`: The target subsystem of the target (console, windows, etc.) - Only affects Windows.
+   * | `target_subsystem`: The target subsystem of the target (console, windows, etc.) - only affects Windows.
    * | `target_configuration`: The build configuration to use (Debug, Release, etc.).
    * | `cxx_standard`: The C++ standard to use (Availability starting at 11 up to the latest STABLE standard).
    * | `warning_level`: The warning level to use (0-4).
@@ -33507,6 +33512,7 @@ namespace csb
    *
    * Useful functions for all functions include:
    * | `choose_files`: Gets a list of files from a specified directory with optional filtering and recursion.
+   * | `contains`: Checks if a container contains a specified value.
    * | `unpack`: Converts a list of paths to a space-separated string.
    * | `combine`: Combines multiple lists into one, removing duplicates and preserving order.
    * | `trim`: Removes trailing and leading newlines from a specified string.
@@ -33516,9 +33522,11 @@ namespace csb
    * | `append_environment_variable`: Appends a value to a specified environment variable.
    * | `prepend_environment_variable`: Prepends a value to a specified environment variable.
    * | `byte_to_hex`: Converts a byte to its hexadecimal string representation.
+   * | `mkdir`: Updates the last modified time of specified directories or creates them if they do not exist.
    * | `touch`: Updates the last modified time of specified files or creates them if they do not exist.
    * | `copy`: Copies specified files to a specified directory.
    * | `move`: Moves specified files to a specified directory.
+   * | `rename`: Renames a specified file or directory.
    * | `remove`: Removes all specified files.
    * | `read_file`: Reads the contents of a specified file as a specified format.
    * | `write_file`: Writes data to a specified file in a specified format.
@@ -33532,8 +33540,8 @@ namespace csb
    * Runs when the `clean` action is specified on the command line.
    *
    * Common uses for this function are to call the following functions:
-   * | `clean_build_directory`: Removes everything in the build directory except optional ignore files.
-   * | `remove`: Removes all specified files.
+   * | `clean_build`: Removes everything in the build directory except optional ignore files.
+   * | `clean`: Removes all specified files and logs their removal.
    *
    * See also: `configure`, `build`, `run`.
    */
@@ -33671,6 +33679,14 @@ namespace csb
       return input.substr(start, end - start + 1);
   }
 
+  // Checks if a container contains a specified value.
+  template <utility::iterable container, typename type>
+    requires std::equality_comparable_with<typename container::value_type, type>
+  bool contains(const container &items, const type &value)
+  {
+    return std::ranges::find(items, value) != std::ranges::end(items);
+  }
+
   // Converts a list of paths to a space-separated string.
   template <utility::iterable_string container> std::string unpack(const container &items)
   {
@@ -33686,85 +33702,96 @@ namespace csb
     return result;
   }
 
-  template <typename type, typename... vectors>
-    requires utility::same_vectors<type, vectors...>
-  std::vector<type> combine(const std::vector<type> &first, const vectors &...rest)
+  // Combines multiple lists into one, removing duplicates and preserving order.
+  template <typename type> std::vector<type> combine(const std::vector<std::vector<type>> &vectors)
   {
     std::vector<type> result{};
     std::unordered_set<type> seen{};
-    auto process{[&](const std::vector<type> &vec)
-                 {
-                   for (const auto &element : vec)
-                   {
-                     if (seen.insert(element).second) { result.push_back(element); }
-                   }
-                 }};
-
-    process(first);
-    (..., process(rest));
+    for (const auto &vector : vectors)
+      for (const auto &element : vector)
+        if (seen.insert(element).second) { result.push_back(element); }
     return result;
   }
 
-  // Updates the last modified time of specified files or creates them if they do not exist.
-  template <typename... paths> inline void touch(const std::filesystem::path &first, const paths &...rest)
+  // Updates the last modified time of specified directories or creates them if they do not exist.
+  inline void mkdir(const std::filesystem::path &path)
   {
-    auto process{[](const std::filesystem::path &path)
-                 {
-                   if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
-                     std::filesystem::create_directories(path.parent_path());
-                   if (std::filesystem::exists(path))
-                     std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
-                   else
-                   {
-                     std::ofstream file(path, std::ios::app);
-                     if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
-                     file.close();
-                   }
-                 }};
-    process(first);
-    (..., process(rest));
+    if (std::filesystem::exists(path))
+      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
+    else
+      std::filesystem::create_directories(path);
+  }
+  // Updates the last modified time of specified directories or creates them if they do not exist.
+  inline void mkdir(const std::vector<std::filesystem::path> &paths)
+  {
+    for (const auto &path : paths) mkdir(path);
+  }
+
+  // Updates the last modified time of specified files or creates them if they do not exist.
+  inline void touch(const std::filesystem::path &path)
+  {
+    if (path.has_parent_path() && !std::filesystem::exists(path.parent_path()))
+      std::filesystem::create_directories(path.parent_path());
+    if (std::filesystem::exists(path))
+      std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now());
+    else
+    {
+      std::ofstream file(path, std::ios::app);
+      if (!file.is_open()) throw std::runtime_error("Failed to touch file: " + path.string());
+      file.close();
+    }
+  }
+  // Updates the last modified time of specified files or creates them if they do not exist.
+  inline void touch(const std::vector<std::filesystem::path> &paths)
+  {
+    for (const auto &path : paths) touch(path);
   }
 
   // Copies the specified files to the destination.
+  inline void copy(const std::filesystem::path &source, const std::filesystem::path &destination)
+  {
+    if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
+    if (!std::filesystem::exists(destination)) std::filesystem::create_directories(destination);
+    std::filesystem::copy(source, destination / source.filename(),
+                          std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::recursive);
+  }
+  // Copies the specified files to the destination.
   inline void copy(const std::vector<std::filesystem::path> &sources, const std::filesystem::path &destination)
   {
-    if (!std::filesystem::exists(destination)) std::filesystem::create_directories(destination);
-    for (const auto &source : sources)
-    {
-      if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
-      std::filesystem::copy(source, destination / source.filename(),
-                            std::filesystem::copy_options::overwrite_existing |
-                              std::filesystem::copy_options::recursive);
-    }
+    for (const auto &source : sources) csb::copy(source, destination);
   }
 
   // Moves the specified files to the destination.
+  inline void move(const std::filesystem::path &source, const std::filesystem::path &destination)
+  {
+    if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
+    if (!std::filesystem::exists(destination)) std::filesystem::create_directories(destination);
+    std::filesystem::copy(source, destination / source.filename(),
+                          std::filesystem::copy_options::overwrite_existing | std::filesystem::copy_options::recursive);
+    std::filesystem::remove_all(source);
+  }
+  // Moves the specified files to the destination.
   inline void move(const std::vector<std::filesystem::path> &sources, const std::filesystem::path &destination)
   {
-    if (!std::filesystem::exists(destination)) std::filesystem::create_directories(destination);
-    for (const auto &source : sources)
-    {
-      if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
-      std::filesystem::copy(source, destination / source.filename(),
-                            std::filesystem::copy_options::overwrite_existing |
-                              std::filesystem::copy_options::recursive);
-      std::filesystem::remove_all(source);
-    }
+    for (const auto &source : sources) move(source, destination);
+  }
+
+  // Renames the specified file or directory.
+  inline void rename(const std::filesystem::path &source, const std::filesystem::path &new_name)
+  {
+    if (!std::filesystem::exists(source)) throw std::runtime_error("Source file does not exist: " + source.string());
+    std::filesystem::rename(source, new_name);
   }
 
   // Removes the specified files.
-  template <typename... paths> inline void remove(const std::filesystem::path &first, const paths &...rest)
+  inline void remove(const std::filesystem::path &path)
   {
-    print<COUT>("\n{}\nRemoving files...\n", utility::small_section_divider);
-    auto process{[](const std::filesystem::path &path)
-                 {
-                   print<COUT>("{}... ", path.string());
-                   if (std::filesystem::exists(path)) std::filesystem::remove_all(path);
-                   print<COUT>("done.\n");
-                 }};
-    process(first);
-    (..., process(rest));
-    print<COUT>("done.\n{}\n", utility::small_section_divider);
+    if (std::filesystem::exists(path)) std::filesystem::remove_all(path);
+  }
+  // Removes the specified files.
+  inline void remove(const std::vector<std::filesystem::path> &paths)
+  {
+    for (const auto &path : paths) csb::remove(path);
   }
 
   /**
@@ -35339,170 +35366,121 @@ namespace csb
    * Installs files from given URLS to corresponding target paths.
    *
    * This function's parameters behave as follows:
-   * | `files`: A single tuple or list of tuples, each containing a URL and a target path. If all target paths already
-   *            exist, the function does nothing.
-   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
+   * | `file`: A single tuple or list of tuples, each containing a URL, a target path and additional curl arguments. If
+   *           all target paths already exist, the function does nothing.
    *
    * See also: `archive_install`, `vcpkg_install`, `subproject_install`.
    */
-  inline void file_install(const std::vector<std::tuple<std::string, std::filesystem::path>> &files,
-                           const std::vector<std::string> &extra_arguments = {})
+  inline void file_install(const std::tuple<std::string, std::filesystem::path, std::vector<std::string>> &file)
   {
-    if (files.empty()) throw std::runtime_error("No files to install.");
-    bool all_exist{true};
-    for (const auto &file : files)
-    {
-      auto [url, target_path]{file};
-      if (url.empty()) throw std::runtime_error("File URL not set.");
-      if (target_path.empty()) throw std::runtime_error("File target path not set.");
-      if (!std::filesystem::exists(target_path))
-      {
-        all_exist = false;
-        break;
-      }
-    }
-    if (all_exist) return;
+    auto &[url, target_path, extra_arguments]{file};
+    if (url.empty()) throw std::runtime_error("File URL not set.");
+    if (target_path.empty()) throw std::runtime_error("File target path not set.");
+    if (std::filesystem::exists(target_path)) return;
+
     print<COUT>("\n{}\n", utility::small_section_divider);
-
-    for (const auto &file : files)
-    {
-      auto [url, target_path]{file};
-      if (std::filesystem::exists(target_path)) continue;
-      if (!std::filesystem::exists(target_path.parent_path()))
-        std::filesystem::create_directories(target_path.parent_path());
-
-      std::string extra{};
-      if (!extra_arguments.empty())
-        for (const auto &argument : extra_arguments) extra += argument + " ";
-      utility::live_execute(
-        std::format("curl -f -L -C - {}-o {} {}", extra, target_path.string(), url),
-        [&url, &target_path](const std::string &)
-        { print<COUT>("Downloading file at '{}' to '{}'...\n", url, target_path.string()); }, nullptr,
-        [](const std::string &, const int return_code)
-        { throw std::runtime_error("Failed to download file. Exited with: " + std::to_string(return_code)); });
-
-      print<COUT>("done.\n");
-    }
-
-    print<COUT>("{}\n", utility::small_section_divider);
+    if (!std::filesystem::exists(target_path.parent_path()))
+      std::filesystem::create_directories(target_path.parent_path());
+    auto extra{unpack(extra_arguments)};
+    utility::live_execute(
+      std::format("curl -f -L -C - {}-o {} {}", extra, target_path.string(), url),
+      [&url, &target_path](const std::string &)
+      { print<COUT>("Downloading file at '{}' to '{}'...\n", url, target_path.string()); }, nullptr,
+      [](const std::string &, const int return_code)
+      { throw std::runtime_error("Failed to download file. Exited with: " + std::to_string(return_code)); });
+    print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
   /**
    * Installs files from given URLS to corresponding target paths.
    *
    * This function's parameters behave as follows:
-   * | `file`: A single tuple or list of tuples, each containing a URL and a target path. If all target paths already
-   *           exist, the function does nothing.
-   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
+   * | `file`: A single tuple or list of tuples, each containing a URL, a target path and additional curl arguments. If
+   *           all target paths already exist, the function does nothing.
    *
    * See also: `archive_install`, `vcpkg_install`, `subproject_install`.
    */
-  inline void file_install(const std::tuple<std::string, std::filesystem::path> &file,
-                           const std::vector<std::string> &extra_arguments = {})
+  inline void
+  file_install(const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::string>>> &files)
   {
-    file_install(std::vector<std::tuple<std::string, std::filesystem::path>>{file}, extra_arguments);
+    for (const auto &file : files) file_install(file);
   }
 
   /**
    * Installs and extracts archives from given URLS to corresponding target paths.
    *
    * This function's parameters behave as follows:
-   * | `archives`: A single tuple or list of tuples, each containing a URL, an extract path, and a list of target paths
-   *               within the archive to extract. If the target paths list is empty, the entire archive is extracted to
-   *               the extract path. If all extract paths already exist, the function does nothing.
-   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
+   * | `archives`: A single tuple or list of tuples, each containing a URL, an extract path, a list of target paths
+   *               within the archive to extract and additional curl arguments. If the target paths list is empty, the
+   *               entire archive is extracted to the extract path. If all extract paths already exist, the function
+   *               does nothing.
    *
    * See also: `file_install`, `vcpkg_install`, `subproject_install`.
    */
-  inline void archive_install(
-    const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>> &archives,
-    const std::vector<std::string> &extra_arguments = {})
+  inline void archive_install(const std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>,
+                                               std::vector<std::string>> &archive)
   {
-    if (archives.empty()) throw std::runtime_error("No archives to install.");
-    bool all_exist{true};
-    for (const auto &archive : archives)
+    auto &[url, extract_path, target_paths, extra_arguments]{archive};
+    if (url.empty()) throw std::runtime_error("Archive URL not set.");
+    if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
+    if (std::filesystem::exists(extract_path)) return;
+
+    print<COUT>("\n{}\n", utility::small_section_divider);
+    auto archive_path{std::filesystem::path{"build"} / url.substr(url.find_last_of('/') + 1)};
+    auto extra{unpack(extra_arguments)};
+    utility::live_execute(
+      std::format("curl -f -L -C - {}-o {} {}", extra, archive_path.string(), url), [&url](const std::string &)
+      { print<COUT>("Downloading archive at '{}'...\n", url); }, nullptr, [](const std::string &, const int return_code)
+      { throw std::runtime_error("Failed to download archive. Exited with: " + std::to_string(return_code)); });
+
+    std::filesystem::path temp_extract_path{(extract_path.string() + "_temp")};
+    mkdir(temp_extract_path);
+    utility::live_execute(
+      std::format("tar -xf {} -C {}", archive_path.string(), temp_extract_path.string()),
+      [&extract_path](const std::string &) { print<COUT>("Extracting archive to '{}'... ", extract_path.string()); },
+      nullptr, [](const std::string &, const int return_code)
+      { throw std::runtime_error("Failed to extract archive. Exited with: " + std::to_string(return_code)); });
+    csb::remove(archive_path);
+
+    if (target_paths.empty())
+      std::filesystem::rename(temp_extract_path, extract_path);
+    else
     {
-      auto [url, extract_path, target_paths]{archive};
-      if (url.empty()) throw std::runtime_error("Archive URL not set.");
-      if (extract_path.empty()) throw std::runtime_error("Archive extract path not set.");
-      if (!std::filesystem::exists(extract_path))
+      mkdir(extract_path);
+      for (const auto &target_path : target_paths)
       {
-        all_exist = false;
-        break;
-      }
-    }
-    if (all_exist) return;
-
-    for (const auto &archive : archives)
-    {
-      print<COUT>("\n{}\n", utility::small_section_divider);
-
-      auto [url, extract_path, target_paths]{archive};
-      if (std::filesystem::exists(extract_path)) continue;
-
-      auto archive_path{std::filesystem::path{"build"} / url.substr(url.find_last_of('/') + 1)};
-      std::string extra{};
-      if (!extra_arguments.empty())
-        for (const auto &argument : extra_arguments) extra += argument + " ";
-      if (!std::filesystem::exists(archive_path))
-        utility::live_execute(
-          std::format("curl -f -L -C - {}-o {} {}", extra, archive_path.string(), url),
-          [&url](const std::string &) { print<COUT>("Downloading archive at '{}'...\n", url); }, nullptr,
-          [](const std::string &, const int return_code)
-          { throw std::runtime_error("Failed to download archive. Exited with: " + std::to_string(return_code)); });
-
-      std::filesystem::path temp_extract_path{(extract_path.string() + "_temp")};
-      if (!std::filesystem::exists(temp_extract_path)) std::filesystem::create_directories(temp_extract_path);
-      utility::live_execute(
-        std::format("tar -xf {} -C {}", archive_path.string(), temp_extract_path.string()),
-        [&extract_path](const std::string &) { print<COUT>("Extracting archive to '{}'... ", extract_path.string()); },
-        nullptr, [](const std::string &, const int return_code)
-        { throw std::runtime_error("Failed to extract archive. Exited with: " + std::to_string(return_code)); });
-      std::filesystem::remove(archive_path);
-
-      if (target_paths.empty())
-        std::filesystem::rename(temp_extract_path, extract_path);
-      else
-      {
-        if (!std::filesystem::exists(extract_path)) std::filesystem::create_directories(extract_path);
-        for (const auto &target_path : target_paths)
+        auto full_target_path{temp_extract_path / target_path};
+        if (!std::filesystem::exists(full_target_path))
         {
-          auto full_target_path{temp_extract_path / target_path};
-          if (!std::filesystem::exists(full_target_path))
-          {
-            std::filesystem::remove_all(temp_extract_path);
-            throw std::runtime_error("Failed to find target path in archive: " + full_target_path.string());
-          }
-
-          if (std::filesystem::is_directory(full_target_path))
-            for (const auto &entry : std::filesystem::directory_iterator(full_target_path))
-              std::filesystem::rename(entry.path(), extract_path / entry.path().filename());
-          else
-            std::filesystem::rename(full_target_path, extract_path / target_path.filename());
+          csb::remove(temp_extract_path);
+          throw std::runtime_error("Failed to find target path in archive: " + full_target_path.string());
         }
-        std::filesystem::remove_all(temp_extract_path);
-      }
 
-      print<COUT>("done.\n{}\n", utility::small_section_divider);
+        if (std::filesystem::is_directory(full_target_path))
+          for (const auto &entry : std::filesystem::directory_iterator(full_target_path))
+            std::filesystem::rename(entry.path(), extract_path / entry.path().filename());
+        else
+          std::filesystem::rename(full_target_path, extract_path / target_path.filename());
+      }
+      csb::remove(temp_extract_path);
     }
+    print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
   /**
    * Installs and extracts archives from given URLS to corresponding target paths.
    *
    * This function's parameters behave as follows:
-   * | `archive`: A single tuple or list of tuples, each containing a URL, an extract path, and a list of target paths
-   *              within the archive to extract. If the target paths list is empty, the entire archive is extracted to
-   *              the extract path. If all extract paths already exist, the function does nothing.
-   * | `extra_arguments`: Allows for additional curl arguments to be specified that apply to every tuple provided.
+   * | `archives`: A single tuple or list of tuples, each containing a URL, an extract path, a list of target paths
+   *               within the archive to extract and additional curl arguments. If the target paths list is empty, the
+   *               entire archive is extracted to the extract path. If all extract paths already exist, the function
+   *               does nothing.
    *
    * See also: `file_install`, `vcpkg_install`, `subproject_install`.
    */
   inline void
-  archive_install(const std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>> &archive,
-                  const std::vector<std::string> &extra_arguments = {})
+  archive_install(const std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>,
+                                               std::vector<std::string>>> &archives)
   {
-    archive_install(
-      std::vector<std::tuple<std::string, std::filesystem::path, std::vector<std::filesystem::path>>>{archive},
-      extra_arguments);
+    for (const auto &archive : archives) archive_install(archive);
   }
 
   /**
@@ -35580,7 +35558,7 @@ namespace csb
    * | `subprojects`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
    *                  `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
    *                  external_include_directories and library_directories are updated; if it is a header library, only
-   *                  external_include_directories are updated; if it is an executable, the PATH is updated.
+   *                  external_include_directories are updated; if it is standalone, the PATH is updated.
    *
    * See also: `file_install`, `archive_install`, `vcpkg_install`.
    */
@@ -35668,13 +35646,79 @@ namespace csb
    * | `subproject`: A single tuple or list of tuples, each containing a GitHub repository name (in the format
    *                 `owner/repo`), a version (tag), and an subproject type. If the type is a compiled library, the
    *                 external_include_directories and library_directories are updated; if it is a header library, only
-   *                 external_include_directories are updated; if it is an executable, the PATH is updated.
+   *                 external_include_directories are updated; if it is standalone, the PATH is updated.
    *
    * See also: `file_install`, `archive_install`, `vcpkg_install`.
    */
   inline void subproject_install(const std::tuple<std::string, std::string, subproject> &subproject)
   {
-    subproject_install(std::vector<std::tuple<std::string, std::string, enum subproject>>{subproject});
+    auto [name, version, subproject_type]{subproject};
+    if (name.empty()) throw std::runtime_error("Subproject name not set.");
+    if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
+
+    auto subproject_directory{std::filesystem::path{"build"} / "subproject"};
+    mkdir(subproject_directory);
+
+    auto repo_name{name.substr(name.find('/') + 1)};
+    auto subproject_path{subproject_directory / repo_name};
+    auto build_path{subproject_path / "build" / (target_configuration == RELEASE ? "release" : "debug")};
+    auto bootstrapped = utility::bootstrap_subproject(subproject_path, name, version);
+
+    auto subproject_time{std::filesystem::exists(subproject_path) ? std::filesystem::last_write_time(subproject_path)
+                                                                  : std::filesystem::file_time_type::min()};
+    auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
+                                                         : std::filesystem::file_time_type::min()};
+    auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
+                                                         : std::filesystem::file_time_type::min()};
+    if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped ||
+        !std::filesystem::exists(build_path) || is_subproject)
+    {
+      print<COUT>("\n{}\n", utility::big_section_divider);
+      if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
+      utility::live_execute(
+        std::format("cd {} && {}{}{} {}", subproject_path.string(), host_platform == LINUX ? "./" : "",
+                    (std::filesystem::path{"script"} / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh",
+                    target_configuration == RELEASE ? "release" : "debug"),
+        [&repo_name, &version](const std::string &)
+        { print<COUT>("Building subproject {} ({})...\n", repo_name, version); },
+        [&subproject_path](const std::string &)
+        {
+          mkdir(subproject_path);
+          print<COUT>("{}\n", utility::big_section_divider);
+        },
+        [](const std::string &, const int return_code)
+        { throw std::runtime_error("Failed to build subproject. Exited with: " + std::to_string(return_code)); });
+    }
+
+    if (subproject_type == STANDALONE)
+      append_environment_variable("PATH", std::filesystem::absolute(build_path).string());
+    else
+    {
+      auto include_path{subproject_path / "build" / "include"};
+      if (std::filesystem::exists(include_path) && std::filesystem::is_directory(include_path))
+        external_include_directories.push_back(include_path);
+      auto vcpkg_path{subproject_path / "build" / "vcpkg_installed"};
+      if (std::filesystem::exists(vcpkg_path) && std::filesystem::is_directory(vcpkg_path))
+      {
+        std::string vcpkg_triplet{};
+        if (host_platform == WINDOWS)
+          vcpkg_triplet = std::format("{}-windows{}{}", host_architecture, (target_linkage == STATIC ? "-static" : ""),
+                                      (target_configuration == RELEASE ? "-release" : ""));
+        else if (host_platform == LINUX)
+          vcpkg_triplet = std::format("{}-linux", host_architecture);
+        auto vcpkg_include_directory{vcpkg_path / vcpkg_triplet / "include"};
+        auto vcpkg_library_directory{
+          vcpkg_path / vcpkg_triplet /
+          (target_configuration == RELEASE ? "lib" : std::filesystem::path{"debug"} / "lib")};
+        if (std::filesystem::exists(vcpkg_include_directory) && std::filesystem::is_directory(vcpkg_include_directory))
+          external_include_directories.push_back(vcpkg_include_directory);
+        if (subproject_type == COMPILED_LIBRARY)
+          if (std::filesystem::exists(vcpkg_library_directory) &&
+              std::filesystem::is_directory(vcpkg_library_directory))
+            library_directories.push_back(vcpkg_library_directory);
+      }
+      if (subproject_type == COMPILED_LIBRARY) library_directories.push_back(build_path);
+    }
   }
 
   /**
@@ -35995,10 +36039,8 @@ namespace csb
   }
 
   // Cleans the build directory, optionally ignoring specified files.
-  inline void clean_build_directory(const std::vector<std::filesystem::path> &ignore_files = {})
+  inline void clean_build(const std::vector<std::filesystem::path> &ignore_files = {})
   {
-    if (!std::filesystem::exists("build")) return;
-
     print<COUT>("\n{}\nCleaning build directory... ", utility::small_section_divider);
     for (const auto &entry : std::filesystem::directory_iterator("build"))
     {
@@ -36008,6 +36050,26 @@ namespace csb
     }
     print<COUT>("done.\n{}\n", utility::small_section_divider);
   }
+  // Cleans the build directory, optionally ignoring specified files.
+  inline void clean_build(const std::filesystem::path &ignore_file)
+  {
+    clean_build(std::vector<std::filesystem::path>{ignore_file});
+  }
+
+  // Cleans the specified files.
+  inline void clean(const std::vector<std::filesystem::path> files)
+  {
+    print<COUT>("\n{}\nCleaning files...\n", utility::small_section_divider);
+    for (const auto &file : files)
+    {
+      print<COUT>("{}... ", file.string());
+      csb::remove(file);
+      print<COUT>("done.\n");
+    }
+    print<COUT>("done.\n{}\n", utility::small_section_divider);
+  }
+  // Cleans the specified files.
+  inline void clean(const std::filesystem::path &file) { clean(std::vector<std::filesystem::path>{file}); }
 
   // Compiles the project source files into corresponding object files and selected headers into precompiled headers.
   inline void compile()
