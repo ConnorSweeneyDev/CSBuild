@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.12
+// CSB 1.10.13
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33523,6 +33523,7 @@ namespace csb
    * | `append_environment_variable`: Appends a value to a specified environment variable.
    * | `prepend_environment_variable`: Prepends a value to a specified environment variable.
    * | `byte_to_hex`: Converts a byte to its hexadecimal string representation.
+   * | `exists`: Checks if specified files or directories exist.
    * | `mkdir`: Updates the last modified time of specified directories or creates them if they do not exist.
    * | `touch`: Updates the last modified time of specified files or creates them if they do not exist.
    * | `copy`: Copies specified files to a specified directory.
@@ -33717,6 +33718,21 @@ namespace csb
   template <typename type> std::vector<type> combine(std::initializer_list<std::vector<type>> vectors)
   {
     return combine(std::vector<std::vector<type>>{vectors});
+  }
+
+  // Checks if specified files or directories exist.
+  inline bool exists(const std::filesystem::path &path) { return std::filesystem::exists(path); }
+  // Checks if specified files or directories exist.
+  inline bool exists(const std::vector<std::filesystem::path> &paths)
+  {
+    for (const auto &path : paths)
+      if (!std::filesystem::exists(path)) return false;
+    return true;
+  }
+  // Checks if specified files or directories exist.
+  inline bool exists(std::initializer_list<std::filesystem::path> paths)
+  {
+    return exists(std::vector<std::filesystem::path>{paths});
   }
 
   // Updates the last modified time of specified directories or creates them if they do not exist.
