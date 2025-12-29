@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.9
+// CSB 1.10.10
 #include <algorithm>
 #include <cctype>
 #include <concepts>
@@ -33511,6 +33511,7 @@ namespace csb
    * | `is_subproject`: A boolean indicating whether the current project is a subproject of another csb project.
    *
    * Useful functions for all functions include:
+   * | `path`: Returns a preferred version of a path given to it.
    * | `choose_files`: Gets a list of files from a specified directory with optional filtering and recursion.
    * | `contains`: Checks if a container contains a specified value.
    * | `unpack`: Converts a list of paths to a space-separated string.
@@ -33793,6 +33794,11 @@ namespace csb
   {
     for (const auto &path : paths) csb::remove(path);
   }
+
+  // Returns a preferred version of a path given to it.
+  inline std::filesystem::path path(const std::string &input) { return std::filesystem::path{input}.make_preferred(); }
+  // Returns a preferred version of a path given to it.
+  inline std::filesystem::path path(const std::filesystem::path &input) { return path(input.string()); }
 
   /**
    * Gets a list of files from a specified directory with optional filtering and recursion.
