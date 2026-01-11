@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.15
+// CSB 1.10.16
 
 #include <algorithm>
 #include <cctype>
@@ -33393,10 +33393,19 @@ inline int pipe_close(FILE *pipe) { return _pclose(pipe); }
 
 inline int terminal_width()
 {
+  try
+  {
+    auto width = std::stoi(get_env("CSB_TERMINAL_WIDTH", ""));
+    return width;
+  }
+  catch (...)
+  {
+  }
   CONSOLE_SCREEN_BUFFER_INFO buffer_info;
   int columns{80};
   if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &buffer_info))
     columns = buffer_info.srWindow.Right - buffer_info.srWindow.Left + 1;
+  set_env("CSB_TERMINAL_WIDTH", std::to_string(columns));
   return columns;
 }
 
@@ -33440,9 +33449,19 @@ inline int pipe_close(FILE *pipe) { return pclose(pipe); }
 
 inline int terminal_width()
 {
+  try
+  {
+    auto width = std::stoi(get_env("CSB_TERMINAL_WIDTH", ""));
+    return width;
+  }
+  catch (...)
+  {
+  }
+  int columns{80};
   struct winsize window{};
-  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0) return window.ws_col;
-  return 80;
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0) columns = window.ws_col;
+  set_env("CSB_TERMINAL_WIDTH", std::to_string(columns));
+  return columns;
 }
 
 #else
