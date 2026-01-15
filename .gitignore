@@ -1,8 +1,8 @@
 # Development Output
 .cache/
-.claude/
 .vscode/
 .vs/
+.opencode/
 
 # Build Output
 compile_commands.json
