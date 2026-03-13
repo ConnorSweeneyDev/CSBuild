@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.10.16
+// CSB 1.11.0
 
 #include <algorithm>
 #include <cctype>
@@ -33385,9 +33385,7 @@ inline void set_env(const std::string &name, const std::string &value)
 }
 
 inline FILE *pipe_open(const std::string &command, const std::string &mode)
-{
-  return _popen(command.c_str(), mode.c_str());
-}
+{ return _popen(command.c_str(), mode.c_str()); }
 
 inline int pipe_close(FILE *pipe) { return _pclose(pipe); }
 
@@ -33441,9 +33439,7 @@ inline void set_env(const std::string &name, const std::string &value)
 }
 
 inline FILE *pipe_open(const std::string &command, const std::string &mode)
-{
-  return popen(command.c_str(), mode.c_str());
-}
+{ return popen(command.c_str(), mode.c_str()); }
 
 inline int pipe_close(FILE *pipe) { return pclose(pipe); }
 
@@ -33651,9 +33647,7 @@ namespace csb
    * See also: `set_environment_variable`, `append_environment_variable`, `prepend_environment_variable`.
    */
   inline std::string get_environment_variable(const std::string &name)
-  {
-    return get_env(name, "Failed to get environment variable: " + name + ".");
-  }
+  { return get_env(name, "Failed to get environment variable: " + name + "."); }
 
   /**
    * Sets the value of a specified environment variable.
@@ -33741,9 +33735,7 @@ namespace csb
   template <utility::iterable container, typename type>
     requires std::equality_comparable_with<typename container::value_type, type>
   bool contains(const container &items, const type &value)
-  {
-    return std::ranges::find(items, value) != std::ranges::end(items);
-  }
+  { return std::ranges::find(items, value) != std::ranges::end(items); }
 
   // Converts a list of paths to a space-separated string.
   template <utility::iterable_string container> std::string unpack(const container &items)
@@ -33772,9 +33764,7 @@ namespace csb
   }
   // Combines multiple lists into one, removing duplicates and preserving order.
   template <typename type> std::vector<type> combine(std::initializer_list<std::vector<type>> vectors)
-  {
-    return combine(std::vector<std::vector<type>>{vectors});
-  }
+  { return combine(std::vector<std::vector<type>>{vectors}); }
 
   // Checks if specified files or directories exist.
   inline bool exists(const std::filesystem::path &path) { return std::filesystem::exists(path); }
@@ -33787,9 +33777,7 @@ namespace csb
   }
   // Checks if specified files or directories exist.
   inline bool exists(std::initializer_list<std::filesystem::path> paths)
-  {
-    return exists(std::vector<std::filesystem::path>{paths});
-  }
+  { return exists(std::vector<std::filesystem::path>{paths}); }
 
   // Returns a directory iterator for a specified directory.
   inline std::filesystem::directory_iterator directory(const std::filesystem::path &path)
@@ -33822,9 +33810,7 @@ namespace csb
   }
   // Updates the last modified time of specified directories or creates them if they do not exist.
   inline void mkdir(std::initializer_list<std::filesystem::path> paths)
-  {
-    mkdir(std::vector<std::filesystem::path>{paths});
-  }
+  { mkdir(std::vector<std::filesystem::path>{paths}); }
 
   // Updates the last modified time of specified files or creates them if they do not exist.
   inline void touch(const std::filesystem::path &path)
@@ -33847,9 +33833,7 @@ namespace csb
   }
   // Updates the last modified time of specified files or creates them if they do not exist.
   inline void touch(std::initializer_list<std::filesystem::path> paths)
-  {
-    touch(std::vector<std::filesystem::path>{paths});
-  }
+  { touch(std::vector<std::filesystem::path>{paths}); }
 
   // Copies the specified files to the destination.
   inline void copy(const std::filesystem::path &source, const std::filesystem::path &destination)
@@ -33866,9 +33850,7 @@ namespace csb
   }
   // Copies the specified files to the destination.
   inline void copy(std::initializer_list<std::filesystem::path> sources, const std::filesystem::path &destination)
-  {
-    copy(std::vector<std::filesystem::path>{sources}, destination);
-  }
+  { copy(std::vector<std::filesystem::path>{sources}, destination); }
 
   // Moves the specified files to the destination.
   inline void move(const std::filesystem::path &source, const std::filesystem::path &destination)
@@ -33886,9 +33868,7 @@ namespace csb
   }
   // Moves the specified files to the destination.
   inline void move(std::initializer_list<std::filesystem::path> sources, const std::filesystem::path &destination)
-  {
-    move(std::vector<std::filesystem::path>{sources}, destination);
-  }
+  { move(std::vector<std::filesystem::path>{sources}, destination); }
 
   // Renames the specified file or directory.
   inline void rename(const std::filesystem::path &source, const std::filesystem::path &new_name)
@@ -33909,9 +33889,7 @@ namespace csb
   }
   // Removes the specified files.
   inline void remove(std::initializer_list<std::filesystem::path> paths)
-  {
-    remove(std::vector<std::filesystem::path>{paths});
-  }
+  { remove(std::vector<std::filesystem::path>{paths}); }
 
   // Returns a preferred version of a path given to it.
   inline std::filesystem::path path(const std::string &input) { return std::filesystem::path{input}.make_preferred(); }
@@ -34077,7 +34055,7 @@ namespace csb
    * See also: `read_file`, `write_file`.
    */
   template <utility::serializable type, utility::modifier<type> modifier>
-  void modify_file(const std::filesystem::path &file, modifier modify)
+  void modify_file(const std::filesystem::path &file, const modifier &modify)
   {
     if constexpr (std::same_as<type, image>) throw std::runtime_error("Modifying images is not supported.");
 
@@ -35669,9 +35647,7 @@ namespace csb
    * See also: `file_install`, `archive_install`, `subproject_install`.
    */
   inline void vcpkg_install(const std::string &vcpkg_version, const std::function<nlohmann::json()> &manifest)
-  {
-    vcpkg_install(vcpkg_version, manifest());
-  }
+  { vcpkg_install(vcpkg_version, manifest()); }
 
   /**
    * Installs subprojects from given GitHub repositories at specified versions.
@@ -36055,15 +36031,29 @@ namespace csb
    *
    * This function's parameters behave as follows:
    * | `clang_version`: Specifies the clang version (tag) to use. If empty, the latest version is used.
+   * | `configuration`: A map of configuration options for the .clang-format file. if empty, will do noting.
    * | `overrides`: A list of files to always format.
    * | `excludes`: A list of files to never format.
    */
-  inline void clang_format(const std::string &clang_version = {}, std::vector<std::filesystem::path> overrides = {},
-                           std::vector<std::filesystem::path> excludes = {})
+  inline void clang_format(const std::string &clang_version = {},
+                           const std::unordered_map<std::string, std::string> &configuration = {},
+                           const std::vector<std::filesystem::path> &overrides = {},
+                           const std::vector<std::filesystem::path> &excludes = {})
   {
     for (auto &file : source_files) file.make_preferred();
     for (auto &file : include_files) file.make_preferred();
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
+
+    if (!configuration.empty())
+    {
+      std::string content{};
+      for (const auto &[key, value] : configuration)
+      {
+        if (key == "BasedOnStyle" || key == "Language") content += std::string(content.empty() ? "" : "\n") + "---";
+        content += std::format("\n{}: {}", key, value);
+      }
+      write_file(".clang-format", content + "\n---");
+    }
 
     auto format_directory{std::filesystem::path{"build"} / "format"};
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
@@ -36101,9 +36091,7 @@ namespace csb
   }
   // Cleans the build directory, optionally ignoring specified files.
   inline void clean_build(const std::filesystem::path &ignore_file)
-  {
-    clean_build(std::vector<std::filesystem::path>{ignore_file});
-  }
+  { clean_build(std::vector<std::filesystem::path>{ignore_file}); }
 
   // Cleans the specified files.
   inline void clean(const std::vector<std::filesystem::path> files)
@@ -36119,9 +36107,7 @@ namespace csb
   }
   // Cleans the specified files.
   inline void clean(std::initializer_list<std::filesystem::path> files)
-  {
-    clean(std::vector<std::filesystem::path>{files});
-  }
+  { clean(std::vector<std::filesystem::path>{files}); }
   // Cleans the specified files.
   inline void clean(const std::filesystem::path &file) { clean(std::vector<std::filesystem::path>{file}); }
 
