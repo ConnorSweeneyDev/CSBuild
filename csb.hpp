@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.11.0
+// CSB 1.11.1
 
 #include <algorithm>
 #include <cctype>
@@ -36036,7 +36036,7 @@ namespace csb
    * | `excludes`: A list of files to never format.
    */
   inline void clang_format(const std::string &clang_version = {},
-                           const std::unordered_map<std::string, std::string> &configuration = {},
+                           const std::vector<std::pair<std::string, std::string>> &configuration = {},
                            const std::vector<std::filesystem::path> &overrides = {},
                            const std::vector<std::filesystem::path> &excludes = {})
   {
