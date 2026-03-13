@@ -36052,7 +36052,7 @@ namespace csb
         if (key == "BasedOnStyle" || key == "Language") content += std::string(content.empty() ? "" : "\n") + "---";
         content += std::format("\n{}: {}", key, value);
       }
-      write_file(".clang-format", content + "\n---");
+      write_file(".clang-format", content + "\n...\n");
     }
 
     auto format_directory{std::filesystem::path{"build"} / "format"};
