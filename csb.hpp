@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.11.1
+// CSB 1.11.2
 
 #include <algorithm>
 #include <cctype>
@@ -33573,6 +33573,7 @@ namespace csb
    * | `append_environment_variable`: Appends a value to a specified environment variable.
    * | `prepend_environment_variable`: Prepends a value to a specified environment variable.
    * | `byte_to_hex`: Converts a byte to its hexadecimal string representation.
+   * | `json_to_yaml`: Converts a nlohmann::json object to a YAML string.
    * | `exists`: Checks if specified files or directories exist.
    * | `directory`: Returns a directory iterator for a specified directory.
    * | `directory_recurse`: Returns a recursive directory iterator for a specified directory.
@@ -33608,6 +33609,7 @@ namespace csb
    * | `compile`: Compiles all source files into object files and selected headers into precompiled headers.
    * | `link`: Links all object files into the target artifact.
    * | `generate_compile_commands`: Generates a compile_commands.json file for LSP support.
+   * | `generate_clangd`: Generates a .clangd file for clangd configuration.
    * | `clang_format`: Formats all source and header files, with an optional version anchor, overrides and excludes.
    * | `subproject_install`: Installs all specified csb subprojects.
    * | `vcpkg_install`: Installs all specified vcpkg packages with an optional version anchor.
@@ -33719,6 +33721,53 @@ namespace csb
     ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character);
     return ss.str();
   };
+
+  // Converts a nlohmann::json object to a YAML string.
+  inline std::string json_to_yaml(const nlohmann::json &object, const std::size_t indent = 0)
+  {
+    auto needs_quotes{[](const std::string& s) { return s.find_first_of(":#\n\"'") != std::string::npos; }};
+    const std::string indent_str(indent, ' ');
+    std::string result{};
+    if (object.is_object())
+      for (const auto &[key, value] : object.items())
+      {
+        if (value.is_primitive())
+        {
+          if (value.is_string())
+          {
+            auto s{value.get<std::string>()};
+            if (needs_quotes(s))
+              result += indent_str + key + ": \"" + s + "\"\n";
+            else
+              result += indent_str + key + ": " + s + "\n";
+          }
+          else
+            result += indent_str + key + ": " + value.dump() + "\n";
+        }
+        else
+        {
+          result += indent_str + key + ":\n";
+          result += json_to_yaml(value, indent + 2);
+        }
+      }
+    else if (object.is_array())
+      for (const auto &item : object)
+      {
+        if (item.is_primitive())
+        {
+          if (item.is_string())
+            result += indent_str + "- " + item.get<std::string>() + "\n";
+          else
+            result += indent_str + "- " + item.dump() + "\n";
+        }
+        else
+        {
+          result += indent_str + "-\n";
+          result += json_to_yaml(item, indent + 2);
+        }
+      }
+    return result;
+  }
 
   // Removes trailing and leading newlines from a specified string.
   inline std::string trim(const std::string &input)
@@ -35968,7 +36017,7 @@ namespace csb
                               return result;
                             }};
 
-    std::filesystem::path compile_commands_path{"compile_commands.json"};
+    auto compile_commands_path{std::filesystem::path{"build"} / "compile_commands.json"};
     auto build_directory{std::filesystem::path{"build"} / (target_configuration == RELEASE ? "release" : "debug")};
     std::string compile_definitions{host_platform == WINDOWS ? "-D_WIN32 " : "-D__linux__ "};
     compile_definitions += target_configuration == DEBUG ? "-D_DEBUG" : "-DNDEBUG";
@@ -36025,6 +36074,16 @@ namespace csb
 
     print<COUT>("done.\n{}\n", utility::small_section_divider());
   }
+
+  /**
+   * Generates a .clangd file for the current project based on the given configuration.
+   *
+   * This function's parameters behave as follows:
+   * | `configuration`: A JSON object representing the clangd configuration. If empty, will generate an empty .clangd
+   *                    file.
+   */
+  inline void generate_clangd(const nlohmann::json &configuration)
+  { write_file(".clangd", json_to_yaml(configuration)); }
 
   /**
    * Formats source and include files using clang-format with optional filtering and version anchoring.
