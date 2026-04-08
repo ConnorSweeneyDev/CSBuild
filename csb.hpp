@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.11.2
+// CSB 1.11.3
 
 #include <algorithm>
 #include <cctype>
@@ -36002,7 +36002,6 @@ namespace csb
     target_files.insert(target_files.end(), include_files.begin(), include_files.end());
     if (utility::find_modified_files(target_files, {"compile_commands.json"}).empty()) return;
     if (utility::forced_configuration.has_value()) target_configuration = utility::forced_configuration.value();
-    print<COUT>("\n{}\nGenerating compile_commands.json... ", utility::small_section_divider());
 
     auto escape_backslashes{[](const std::string &string) -> std::string
                             {
@@ -36071,19 +36070,23 @@ namespace csb
       throw std::runtime_error("Failed to open compile_commands.json file for writing.");
     compile_commands_file << content;
     compile_commands_file.close();
-
-    print<COUT>("done.\n{}\n", utility::small_section_divider());
   }
 
   /**
    * Generates a .clangd file for the current project based on the given configuration.
    *
    * This function's parameters behave as follows:
-   * | `configuration`: A JSON object representing the clangd configuration. If empty, will generate an empty .clangd
-   *                    file.
+   * | `configuration`: A JSON object representing the clangd configuration. Will always contain a "CompileFlags" object
+   *                    with a "CompilationDatabase" field set to "build/".
    */
-  inline void generate_clangd(const nlohmann::json &configuration)
-  { write_file(".clangd", json_to_yaml(configuration)); }
+  inline void generate_clangd(const nlohmann::json &configuration = {})
+  {
+    nlohmann::json config = configuration;
+    if (!config.contains("CompileFlags")) config["CompileFlags"] = nlohmann::json::object();
+    if (!config["CompileFlags"].contains("CompilationDatabase"))
+      config["CompileFlags"]["CompilationDatabase"] = "build/";
+    write_file(".clangd", json_to_yaml(config));
+  }
 
   /**
    * Formats source and include files using clang-format with optional filtering and version anchoring.
