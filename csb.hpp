@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.11.3
+// CSB 1.11.4
 
 #include <algorithm>
 #include <cctype>
@@ -33725,7 +33725,7 @@ namespace csb
   // Converts a nlohmann::json object to a YAML string.
   inline std::string json_to_yaml(const nlohmann::json &object, const std::size_t indent = 0)
   {
-    auto needs_quotes{[](const std::string& s) { return s.find_first_of(":#\n\"'") != std::string::npos; }};
+    auto needs_quotes{[](const std::string &s) { return s.find_first_of(":#\n\"'") != std::string::npos; }};
     const std::string indent_str(indent, ' ');
     std::string result{};
     if (object.is_object())
@@ -35670,8 +35670,10 @@ namespace csb
         !manifest.contains("builtin-baseline") || is_subproject)
       utility::live_execute(
         std::format("{} install --vcpkg-root {} --triplet {} --x-manifest-root {} --x-install-root {}",
-                    vcpkg_path.string(), vcpkg_path.parent_path().string(), vcpkg_triplet,
-                    vcpkg_path.parent_path().string(), vcpkg_installed_directory.string()),
+                    std::filesystem::absolute(vcpkg_path).string(),
+                    std::filesystem::absolute(vcpkg_path.parent_path()).string(), vcpkg_triplet,
+                    std::filesystem::absolute(vcpkg_path.parent_path()).string(),
+                    std::filesystem::absolute(vcpkg_installed_directory).string()),
         [&vcpkg_path, &manifest, &vcpkg_version, &vcpkg_triplet](const std::string &)
         {
           write_file(vcpkg_path.parent_path() / "vcpkg.json", manifest);
