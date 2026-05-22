@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.11.4
+// CSB 1.12.0
 
 #include <algorithm>
 #include <cctype>
@@ -33610,7 +33610,8 @@ namespace csb
    * | `link`: Links all object files into the target artifact.
    * | `generate_compile_commands`: Generates a compile_commands.json file for LSP support.
    * | `generate_clangd`: Generates a .clangd file for clangd configuration.
-   * | `clang_format`: Formats all source and header files, with an optional version anchor, overrides and excludes.
+   * | `generate_clang_format`: Generates a .clang-format file based on a configuration passed to it.
+   * | `format`: Formats all source/header files using clang, with an optional version anchor, overrides and excludes.
    * | `subproject_install`: Installs all specified csb subprojects.
    * | `vcpkg_install`: Installs all specified vcpkg packages with an optional version anchor.
    * | `archive_install`: Installs all specified archives to a specified directory.
@@ -36091,33 +36092,38 @@ namespace csb
   }
 
   /**
+   * Generates a .clang-format file based on the given configuration.
+   *
+   * This function's parameters behave as follows:
+   * | `configuration`: A vector of pairs representing the configuration. If empty, throws an exception.
+   */
+  inline void generate_clang_format(const std::vector<std::pair<std::string, std::string>> &configuration = {})
+  {
+    if (configuration.empty()) throw std::runtime_error("No .clang_format config provided.");
+
+    std::string content{};
+    for (const auto &[key, value] : configuration)
+    {
+      if (key == "BasedOnStyle" || key == "Language") content += std::string(content.empty() ? "" : "\n") + "---";
+      content += std::format("\n{}: {}", key, value);
+    }
+    write_file(".clang-format", content + "\n...\n");
+  }
+
+  /**
    * Formats source and include files using clang-format with optional filtering and version anchoring.
    *
    * This function's parameters behave as follows:
    * | `clang_version`: Specifies the clang version (tag) to use. If empty, the latest version is used.
-   * | `configuration`: A map of configuration options for the .clang-format file. if empty, will do noting.
    * | `overrides`: A list of files to always format.
    * | `excludes`: A list of files to never format.
    */
-  inline void clang_format(const std::string &clang_version = {},
-                           const std::vector<std::pair<std::string, std::string>> &configuration = {},
-                           const std::vector<std::filesystem::path> &overrides = {},
-                           const std::vector<std::filesystem::path> &excludes = {})
+  inline void format(const std::string &clang_version = {}, const std::vector<std::filesystem::path> &overrides = {},
+                     const std::vector<std::filesystem::path> &excludes = {})
   {
     for (auto &file : source_files) file.make_preferred();
     for (auto &file : include_files) file.make_preferred();
     if (source_files.empty() && include_files.empty()) throw std::runtime_error("No files to format.");
-
-    if (!configuration.empty())
-    {
-      std::string content{};
-      for (const auto &[key, value] : configuration)
-      {
-        if (key == "BasedOnStyle" || key == "Language") content += std::string(content.empty() ? "" : "\n") + "---";
-        content += std::format("\n{}: {}", key, value);
-      }
-      write_file(".clang-format", content + "\n...\n");
-    }
 
     auto format_directory{std::filesystem::path{"build"} / "format"};
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
