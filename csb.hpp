@@ -34764,7 +34764,7 @@ namespace csb::utility
 
     std::string current_hash{};
     execute(
-      std::format("cd {} && git rev-parse HEAD", vcpkg_path.parent_path().string()), nullptr,
+      std::format("cd {} && git rev-list -n 1 HEAD", vcpkg_path.parent_path().string()), nullptr,
       [&](const std::string &, const std::string &output)
       {
         current_hash = output;
@@ -34801,7 +34801,7 @@ namespace csb::utility
     }
     std::string target_hash{};
     execute(
-      std::format("cd {} && git rev-parse {}", vcpkg_path.parent_path().string(), vcpkg_version), nullptr,
+      std::format("cd {} && git rev-list -n 1 {}", vcpkg_path.parent_path().string(), vcpkg_version), nullptr,
       [&](const std::string &, const std::string &output)
       {
         target_hash = output;
@@ -34860,7 +34860,7 @@ namespace csb::utility
     }
     std::string current_hash{};
     execute(
-      std::format("cd {} && git rev-parse HEAD", path.string()), nullptr,
+      std::format("cd {} && git rev-list -n 1 HEAD", path.string()), nullptr,
       [&](const std::string &, const std::string &output)
       {
         current_hash = output;
@@ -34900,7 +34900,7 @@ namespace csb::utility
     }
     std::string target_hash{};
     execute(
-      std::format("cd {} && git rev-parse {}", path.string(), version), nullptr,
+      std::format("cd {} && git rev-list -n 1 {}", path.string(), version), nullptr,
       [&](const std::string &, const std::string &output)
       {
         target_hash = output;
