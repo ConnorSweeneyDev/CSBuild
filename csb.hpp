@@ -34192,8 +34192,8 @@ namespace csb::utility
 
   inline void setup_environment_variables()
   {
-    std::vector<std::string> env_content{};
-    if (std::filesystem::exists(".env")) env_content = read_file<std::vector<std::string>>(".env");
+    if (!std::filesystem::exists(".env")) return;
+    std::vector<std::string> env_content{read_file<std::vector<std::string>>(".env")};
     for (const auto &line : env_content)
     {
       if (line.empty() || line[0] == '#') continue;
@@ -35073,19 +35073,6 @@ namespace csb
   // The target's source file's preprocessor definitions.
   inline std::vector<std::string> definitions{};
 
-  namespace utility
-  {
-    inline void setup_subproject()
-    {
-      if (auto configuration = get_environment_variable("CSB_TARGET_CONFIGURATION"); configuration.empty())
-      {
-        set_environment_variable("CSB_TARGET_CONFIGURATION", target_configuration == RELEASE ? "RELEASE" : "DEBUG");
-        return;
-      }
-      is_subproject = true;
-    }
-  }
-
   /**
    * Runs a task unconditionally.
    *
@@ -35735,9 +35722,8 @@ namespace csb
       print<COUT>("\n{}\n", utility::big_section_divider());
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
       utility::live_execute(
-        std::format("cd {} && {}{}{} {}", subproject_path.string(), host_platform == LINUX ? "./" : "",
-                    (std::filesystem::path{"script"} / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh",
-                    target_configuration == RELEASE ? "release" : "debug"),
+        std::format("cd {} && {}{}{}", subproject_path.string(), host_platform == LINUX ? "./" : "",
+                    (std::filesystem::path{"script"} / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh"),
         [&repo_name, &version](const std::string &)
         { print<COUT>("Building subproject {} ({})...\n", repo_name, version); },
         [&subproject_path](const std::string &)
@@ -36661,7 +36647,7 @@ namespace csb
                                                                                                                        \
       csb::utility::handle_arguments(argc, argv);                                                                      \
       csb::utility::setup_environment_variables();                                                                     \
-      csb::utility::setup_subproject();                                                                                \
+      if (!csb::get_environment_variable("CSB_TARGET_CONFIGURATION").empty()) csb::is_subproject = true;               \
       csb::configure();                                                                                                \
       if (csb::is_subproject)                                                                                          \
         csb::target_configuration =                                                                                    \
@@ -36669,6 +36655,9 @@ namespace csb
                                        "Subproject detected with no CSB_TARGET_CONFIGURATION") == "RELEASE"            \
             ? RELEASE                                                                                                  \
             : DEBUG;                                                                                                   \
+      else                                                                                                             \
+        csb::set_environment_variable("CSB_TARGET_CONFIGURATION",                                                      \
+                                      csb::target_configuration == RELEASE ? "RELEASE" : "DEBUG");                     \
       if (csb::utility::current_task == CLEAN)                                                                         \
         return csb::clean();                                                                                           \
       else if (csb::utility::current_task == BUILD)                                                                    \
