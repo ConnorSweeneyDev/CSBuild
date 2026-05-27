@@ -2,6 +2,7 @@
 .cache/
 .vscode/
 .vs/
+.claude/
 .opencode/
 
 # Build Output

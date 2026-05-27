@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 1.12.1
+// CSB 2.0.0
 
 #include <algorithm>
 #include <cctype>
@@ -33322,7 +33322,6 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 #include <iostream>
 #include <iterator>
 #include <mutex>
-#include <optional>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -34692,15 +34691,15 @@ namespace csb::utility
       }
 
       std::filesystem::file_time_type csb_header_time{};
-      if (!std::filesystem::exists("csb.hpp"))
+      if (!std::filesystem::exists(std::filesystem::path{"csb"} / "csb.hpp"))
         csb_header_time = std::filesystem::file_time_type::min();
       else
-        csb_header_time = std::filesystem::last_write_time("csb.hpp");
+        csb_header_time = std::filesystem::last_write_time(std::filesystem::path{"csb"} / "csb.hpp");
       std::filesystem::file_time_type csb_source_time{};
-      if (!std::filesystem::exists("csb.cpp"))
+      if (!std::filesystem::exists(std::filesystem::path{"csb"} / "csb.cpp"))
         csb_source_time = std::filesystem::file_time_type::min();
       else
-        csb_source_time = std::filesystem::last_write_time("csb.cpp");
+        csb_source_time = std::filesystem::last_write_time(std::filesystem::path{"csb"} / "csb.cpp");
       auto source_time{std::filesystem::last_write_time(target_file)};
 
       bool needs_rebuild{};
@@ -35647,10 +35646,12 @@ namespace csb
     auto manifest_path{vcpkg_path.parent_path() / "vcpkg.json"};
     auto manifest_time{std::filesystem::exists(manifest_path) ? std::filesystem::last_write_time(manifest_path)
                                                               : std::filesystem::file_time_type::min()};
-    auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
-                                                         : std::filesystem::file_time_type::min()};
-    auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
-                                                         : std::filesystem::file_time_type::min()};
+    auto csb_cpp_time{std::filesystem::exists(std::filesystem::path{"csb"} / "csb.cpp")
+                        ? std::filesystem::last_write_time(std::filesystem::path{"csb"} / "csb.cpp")
+                        : std::filesystem::file_time_type::min()};
+    auto csb_hpp_time{std::filesystem::exists(std::filesystem::path{"csb"} / "csb.hpp")
+                        ? std::filesystem::last_write_time(std::filesystem::path{"csb"} / "csb.hpp")
+                        : std::filesystem::file_time_type::min()};
     if (!std::filesystem::exists(vcpkg_installed_directory) || !std::filesystem::exists(outputs.first) ||
         !std::filesystem::exists(outputs.second) || manifest_time < csb_cpp_time || manifest_time < csb_hpp_time ||
         !manifest.contains("builtin-baseline") || is_subproject)
@@ -35712,10 +35713,12 @@ namespace csb
 
     auto subproject_time{std::filesystem::exists(subproject_path) ? std::filesystem::last_write_time(subproject_path)
                                                                   : std::filesystem::file_time_type::min()};
-    auto csb_cpp_time{std::filesystem::exists("csb.cpp") ? std::filesystem::last_write_time("csb.cpp")
-                                                         : std::filesystem::file_time_type::min()};
-    auto csb_hpp_time{std::filesystem::exists("csb.hpp") ? std::filesystem::last_write_time("csb.hpp")
-                                                         : std::filesystem::file_time_type::min()};
+    auto csb_cpp_time{std::filesystem::exists(std::filesystem::path{"csb"} / "csb.cpp")
+                        ? std::filesystem::last_write_time(std::filesystem::path{"csb"} / "csb.cpp")
+                        : std::filesystem::file_time_type::min()};
+    auto csb_hpp_time{std::filesystem::exists(std::filesystem::path{"csb"} / "csb.hpp")
+                        ? std::filesystem::last_write_time(std::filesystem::path{"csb"} / "csb.hpp")
+                        : std::filesystem::file_time_type::min()};
     if (subproject_time < csb_cpp_time || subproject_time < csb_hpp_time || bootstrapped ||
         !std::filesystem::exists(build_path) || is_subproject)
     {
@@ -36005,15 +36008,16 @@ namespace csb
     auto build_directory{std::filesystem::path{"build"} / (target_configuration == RELEASE ? "release" : "debug")};
     std::string compile_definitions{host_platform == WINDOWS ? "-D_WIN32 " : "-D__linux__ "};
     compile_definitions += target_configuration == DEBUG ? "-D_DEBUG" : "-DNDEBUG";
-    std::string csb_output{(std::filesystem::path{"build"} / "csb.o").string()};
-    std::string content{
-      std::format("[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
-                  "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
-                  "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2 {} -c csb.cpp -o {}\"\n  }},\n",
-                  escape_backslashes(std::filesystem::current_path().string()),
-                  escape_backslashes((std::filesystem::current_path() / std::filesystem::path{"csb.cpp"}).string()),
-                  cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard), compile_definitions,
-                  escape_backslashes(csb_output))};
+    std::string csb_absolute{
+      escape_backslashes(std::filesystem::absolute(std::filesystem::path{"csb"} / "csb.cpp").string())};
+    std::string csb_output{escape_backslashes((std::filesystem::path{"build"} / "csb.o").string())};
+    std::string content{std::format(
+      "[\n  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \"command\": \"clang++ -std=c++{} "
+      "-Wall -Wextra -Wpedantic -Wconversion -Wshadow-all -Wundef -Wdeprecated -Wtype-limits -Wcast-qual "
+      "-Wcast-align -Wfloat-equal -Wunreachable-code-aggressive -Wformat=2 {} -I\\\"csb\\\" -c "
+      "\\\"{}\\\" -o \\\"{}\\\"\"\n  }},\n",
+      escape_backslashes(std::filesystem::current_path().string()), csb_absolute,
+      cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard), compile_definitions, csb_absolute, csb_output)};
     for (auto iterator{source_files.begin()}; iterator != source_files.end();)
     {
       std::string compiler{};
@@ -36111,7 +36115,7 @@ namespace csb
     if (!std::filesystem::exists(format_directory)) std::filesystem::create_directories(format_directory);
     std::vector<std::filesystem::path> format_files{};
     format_files.reserve(1 + source_files.size() + include_files.size() + overrides.size());
-    format_files.push_back("csb.cpp");
+    format_files.push_back(std::filesystem::path{"csb"} / "csb.cpp");
     format_files.insert(format_files.end(), source_files.begin(), source_files.end());
     format_files.insert(format_files.end(), include_files.begin(), include_files.end());
     format_files.insert(format_files.end(), overrides.begin(), overrides.end());
