@@ -35726,7 +35726,7 @@ namespace csb
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
       utility::live_execute(
         std::format("cd {} && {}{}{}", subproject_path.string(), host_platform == LINUX ? "./" : "",
-                    (std::filesystem::path{"script"} / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh"),
+                    (std::filesystem::path{"csb"} / "script" / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh"),
         [&repo_name, &version](const std::string &)
         { print<COUT>("Building subproject {} ({})...\n", repo_name, version); },
         [&subproject_path](const std::string &)
