@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 2.2.0
+// CSB 2.2.1
 
 #include <algorithm>
 #include <array>
@@ -33575,10 +33575,10 @@ namespace csb
     template <typename tuple_type>
     concept tuple = requires { typename std::tuple_size<tuple_type>::type; };
     template <typename type>
-    concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
-                           std::same_as<type, std::vector<std::byte>> || std::same_as<type, csp> ||
-                           std::same_as<type, image> || std::same_as<type, aseprite> ||
-                           std::same_as<type, nlohmann::json>;
+    concept serializable =
+      std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
+      std::same_as<type, std::vector<std::byte>> || std::same_as<type, csp> || std::same_as<type, image> ||
+      std::same_as<type, aseprite> || std::same_as<type, nlohmann::json>;
     template <typename mod, typename data_type>
     concept modifier = requires(mod modify, const data_type &value) {
       { modify(value) } -> std::convertible_to<data_type>;
@@ -36344,13 +36344,14 @@ namespace csb
 
     auto checks = std::vector<std::filesystem::path>{output_header, output_source};
     checks.reserve(check_files.size() + 2);
-    for (const auto file : check_files) checks.push_back(file);
+    for (const auto &file : check_files) checks.push_back(file);
     task_run(
       [&](const std::vector<std::filesystem::path> &task_resources,
           const std::vector<std::filesystem::path> &task_outputs)
       {
         if (task_outputs.size() < 2) throw std::runtime_error("You must define a header and source output file.");
-        std::pair<std::filesystem::path, std::filesystem::path> fixed_outputs = {task_outputs.at(0), task_outputs.at(1)};
+        std::pair<std::filesystem::path, std::filesystem::path> fixed_outputs = {task_outputs.at(0),
+                                                                                 task_outputs.at(1)};
         print<COUT>("Generating embedded resources into '{}' and '{}'... ", fixed_outputs.first.string(),
                     fixed_outputs.second.string());
 
@@ -36396,29 +36397,35 @@ namespace csb
         if (source_end_function) source_content += source_end_function(files);
 
         {
-          if (fixed_outputs.first.has_parent_path()) std::filesystem::create_directories(fixed_outputs.first.parent_path());
+          if (fixed_outputs.first.has_parent_path())
+            std::filesystem::create_directories(fixed_outputs.first.parent_path());
           std::ofstream output_file(fixed_outputs.first);
           if (!output_file.is_open())
-            throw std::runtime_error(std::format("Failed to open embed output file for writing: {}.", fixed_outputs.first.string()));
+            throw std::runtime_error(
+              std::format("Failed to open embed output file for writing: {}.", fixed_outputs.first.string()));
           if (fixed_outputs.first.extension() == ".hpp" || fixed_outputs.first.extension() == ".h")
             output_file << header_content;
           else if (fixed_outputs.first.extension() == ".cpp" || fixed_outputs.first.extension() == ".c")
             output_file << source_content;
           else
-            throw std::runtime_error(std::format("Embed output file has unsupported extension: {}.", fixed_outputs.first.string()));
+            throw std::runtime_error(
+              std::format("Embed output file has unsupported extension: {}.", fixed_outputs.first.string()));
           output_file.close();
         }
         {
-          if (fixed_outputs.second.has_parent_path()) std::filesystem::create_directories(fixed_outputs.second.parent_path());
+          if (fixed_outputs.second.has_parent_path())
+            std::filesystem::create_directories(fixed_outputs.second.parent_path());
           std::ofstream output_file(fixed_outputs.second);
           if (!output_file.is_open())
-            throw std::runtime_error(std::format("Failed to open embed output file for writing: {}.", fixed_outputs.second.string()));
+            throw std::runtime_error(
+              std::format("Failed to open embed output file for writing: {}.", fixed_outputs.second.string()));
           if (fixed_outputs.second.extension() == ".hpp" || fixed_outputs.second.extension() == ".h")
             output_file << header_content;
           else if (fixed_outputs.second.extension() == ".cpp" || fixed_outputs.second.extension() == ".c")
             output_file << source_content;
           else
-            throw std::runtime_error(std::format("Embed output file has unsupported extension: {}.", fixed_outputs.second.string()));
+            throw std::runtime_error(
+              std::format("Embed output file has unsupported extension: {}.", fixed_outputs.second.string()));
           output_file.close();
         }
 
