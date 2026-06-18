@@ -33303,12 +33303,14 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 2.0.0
+// CSB 2.1.0
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -33480,6 +33482,22 @@ namespace csb
     int height{};
     int channels{};
   };
+  struct aseprite
+  {
+    struct animation
+    {
+      std::string name{};
+      std::pair<unsigned int, unsigned int> range{};
+      std::vector<double> times{};
+      std::vector<std::unordered_map<std::string, std::array<double, 4>>> hitboxes{};
+    };
+    std::vector<std::byte> data{};
+    unsigned int width{};
+    unsigned int height{};
+    unsigned int channels{};
+    std::pair<unsigned int, unsigned int> resolution{};
+    std::vector<animation> animations{};
+  };
 
   namespace utility
   {
@@ -33523,9 +33541,9 @@ namespace csb
     template <typename tuple_type>
     concept tuple = requires { typename std::tuple_size<tuple_type>::type; };
     template <typename type>
-    concept serializable =
-      std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
-      std::same_as<type, std::vector<std::byte>> || std::same_as<type, image> || std::same_as<type, nlohmann::json>;
+    concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
+                           std::same_as<type, std::vector<std::byte>> || std::same_as<type, image> ||
+                           std::same_as<type, aseprite> || std::same_as<type, nlohmann::json>;
     template <typename mod, typename data_type>
     concept modifier = requires(mod modify, const data_type &value) {
       { modify(value) } -> std::convertible_to<data_type>;
@@ -34000,6 +34018,7 @@ namespace csb
    * | `std::vector<std::string>`: Reads the file into a list of strings, one per line.
    * | `std::vector<std::byte>`: Reads the file into a byte array.
    * | `image`: Reads the file as an image using stb_image - returns data, width, height and channels.
+   * | `aseprite`: Reads the file as a resource containing image data as well as frame and hitbox data.
    * | `nlohmann::json`: Reads the file as a JSON object.
    *
    * See also: `write_file`, `modify_file`.
@@ -34032,6 +34051,337 @@ namespace csb
       stbi_image_free(data);
       return result;
     }
+    else if constexpr (std::same_as<type, aseprite>)
+    {
+      if (!std::filesystem::exists(file)) throw std::runtime_error("File does not exist: " + file.string());
+      std::ifstream input(file, std::ios::binary | std::ios::ate);
+      if (!input.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+      const std::streamsize total{input.tellg()};
+      input.seekg(0, std::ios::beg);
+      std::vector<unsigned char> bytes(static_cast<std::size_t>(total));
+      if (total > 0 && !input.read(reinterpret_cast<char *>(bytes.data()), total))
+        throw std::runtime_error("Failed to read file: " + file.string());
+      input.close();
+
+      std::size_t cursor{};
+      const auto require{[&](std::size_t count)
+                         {
+                           if (cursor + count > bytes.size())
+                             throw std::runtime_error("Malformed Aseprite file (unexpected end): " + file.string());
+                         }};
+      const auto byte{[&]() -> std::uint8_t
+                      {
+                        require(1);
+                        return bytes[cursor++];
+                      }};
+      const auto word{[&]() -> std::uint16_t
+                      {
+                        require(2);
+                        const std::uint16_t value(
+                          static_cast<std::uint16_t>(static_cast<std::uint16_t>(bytes[cursor]) |
+                                                     static_cast<std::uint16_t>(bytes[cursor + 1]) << 8));
+                        cursor += 2;
+                        return value;
+                      }};
+      const auto dword{[&]() -> std::uint32_t
+                       {
+                         require(4);
+                         const std::uint32_t value(static_cast<std::uint32_t>(bytes[cursor]) |
+                                                   static_cast<std::uint32_t>(bytes[cursor + 1]) << 8 |
+                                                   static_cast<std::uint32_t>(bytes[cursor + 2]) << 16 |
+                                                   static_cast<std::uint32_t>(bytes[cursor + 3]) << 24);
+                         cursor += 4;
+                         return value;
+                       }};
+      const auto integer{[&]() -> std::int16_t { return static_cast<std::int16_t>(word()); }};
+      const auto string{[&]() -> std::string
+                        {
+                          const std::uint16_t length{word()};
+                          require(length);
+                          std::string value(reinterpret_cast<const char *>(bytes.data() + cursor), length);
+                          cursor += length;
+                          return value;
+                        }};
+      const auto skip{[&](std::size_t count)
+                      {
+                        require(count);
+                        cursor += count;
+                      }};
+
+      dword();
+      if (word() != 0xA5E0) throw std::runtime_error("Not an Aseprite file: " + file.string());
+      const std::uint16_t frame_count{word()};
+      const std::uint16_t canvas_width{word()};
+      const std::uint16_t canvas_height{word()};
+      if (word() != 32) throw std::runtime_error("Aseprite file must be 32-bit RGBA: " + file.string());
+      cursor = 128;
+
+      struct layer_info
+      {
+        std::string name{};
+        std::uint16_t kind{};
+        std::uint16_t blend{};
+        std::uint8_t opacity{};
+        bool visible{};
+        bool image{};
+        bool hitbox{};
+      };
+      struct cel_info
+      {
+        std::int16_t x{}, y{};
+        std::uint16_t width{}, height{};
+        std::uint16_t kind{};
+        std::uint16_t link{};
+        std::size_t offset{}, size{};
+        bool present{};
+      };
+      struct tag_info
+      {
+        std::uint16_t from{}, to{};
+        std::string name{};
+      };
+      std::vector<layer_info> layers{};
+      std::vector<std::tuple<std::uint16_t, std::uint16_t, cel_info>> raw_cels{};
+      std::vector<tag_info> tags{};
+      std::vector<double> durations(frame_count, 0.0);
+      std::string group{};
+      bool image_group{}, hitbox_group{};
+
+      for (std::uint16_t frame{}; frame < frame_count; ++frame)
+      {
+        const std::size_t frame_start{cursor};
+        const std::uint32_t frame_bytes{dword()};
+        if (word() != 0xF1FA) throw std::runtime_error("Malformed Aseprite frame header: " + file.string());
+        const std::uint16_t old_chunks{word()};
+        durations[frame] = static_cast<double>(word()) / 1000.0;
+        skip(2);
+        const std::uint32_t new_chunks{dword()};
+        const std::uint32_t chunks{new_chunks != 0 ? new_chunks : old_chunks};
+
+        for (std::uint32_t chunk{}; chunk < chunks; ++chunk)
+        {
+          const std::size_t chunk_start{cursor};
+          const std::uint32_t chunk_size{dword()};
+          const std::uint16_t chunk_type{word()};
+          if (chunk_type == 0x2004)
+          {
+            const std::uint16_t flags{word()};
+            const std::uint16_t kind{word()};
+            const std::uint16_t child{word()};
+            word();
+            word();
+            const std::uint16_t blend{word()};
+            const std::uint8_t opacity{byte()};
+            skip(3);
+            const std::string name{string()};
+            layer_info info{};
+            info.name = name;
+            info.kind = kind;
+            info.blend = blend;
+            info.opacity = opacity;
+            info.visible = (flags & 1) != 0;
+            if (child == 0)
+            {
+              if (kind != 1)
+                throw std::runtime_error("Aseprite top-level layer '" + name +
+                                         "' must be a group ('image' or 'hitbox'): " + file.string());
+              if (name != "image" && name != "hitbox")
+                throw std::runtime_error("Unexpected Aseprite top-level group '" + name +
+                                         "' (only 'image' and 'hitbox' are allowed): " + file.string());
+              group = name;
+              (name == "image" ? image_group : hitbox_group) = true;
+            }
+            else
+            {
+              if (group.empty())
+                throw std::runtime_error("Aseprite layer '" + name + "' is outside any group: " + file.string());
+              if (group == "hitbox" && kind == 1)
+                throw std::runtime_error("Aseprite 'hitbox' group must be flat (no subgroups): " + file.string());
+              info.image = group == "image" && kind != 1;
+              info.hitbox = group == "hitbox" && kind != 1;
+            }
+            layers.push_back(info);
+          }
+          else if (chunk_type == 0x2018)
+          {
+            const std::uint16_t count{word()};
+            skip(8);
+            for (std::uint16_t entry{}; entry < count; ++entry)
+            {
+              tag_info tag{};
+              tag.from = word();
+              tag.to = word();
+              byte();
+              word();
+              skip(6);
+              skip(3);
+              byte();
+              tag.name = string();
+              tags.push_back(tag);
+            }
+          }
+          else if (chunk_type == 0x2005)
+          {
+            const std::uint16_t layer{word()};
+            cel_info cel{};
+            cel.x = integer();
+            cel.y = integer();
+            byte();
+            cel.kind = word();
+            integer();
+            skip(5);
+            if (cel.kind == 0 || cel.kind == 2)
+            {
+              cel.width = word();
+              cel.height = word();
+              cel.offset = cursor;
+              cel.size = chunk_start + chunk_size - cursor;
+            }
+            else if (cel.kind == 1)
+              cel.link = word();
+            else
+              throw std::runtime_error("Aseprite tilemap cels are not supported: " + file.string());
+            cel.present = true;
+            raw_cels.emplace_back(layer, frame, cel);
+          }
+          cursor = chunk_start + chunk_size;
+        }
+        cursor = frame_start + frame_bytes;
+      }
+
+      if (!image_group)
+        throw std::runtime_error("Aseprite file is missing the required 'image' group: " + file.string());
+      if (!hitbox_group)
+        throw std::runtime_error("Aseprite file is missing the required 'hitbox' group: " + file.string());
+      if (tags.empty()) throw std::runtime_error("Aseprite file must contain at least one tag: " + file.string());
+      for (std::size_t first{}; first < tags.size(); ++first)
+        for (std::size_t second{first + 1}; second < tags.size(); ++second)
+          if (tags[first].name == tags[second].name)
+            throw std::runtime_error("Duplicate Aseprite tag name '" + tags[first].name + "': " + file.string());
+      for (std::size_t first{}; first < layers.size(); ++first)
+        if (layers[first].hitbox)
+          for (std::size_t second{first + 1}; second < layers.size(); ++second)
+            if (layers[second].hitbox && layers[first].name == layers[second].name)
+              throw std::runtime_error("Duplicate Aseprite hitbox layer '" + layers[first].name +
+                                       "': " + file.string());
+      if (std::none_of(layers.begin(), layers.end(), [](const layer_info &layer) { return layer.image; }))
+        throw std::runtime_error("Aseprite 'image' group has no layers: " + file.string());
+
+      std::vector<cel_info> grid(static_cast<std::size_t>(layers.size()) * frame_count);
+      for (const auto &[layer, frame, cel] : raw_cels)
+        if (layer < layers.size() && frame < frame_count)
+          grid[static_cast<std::size_t>(layer) * frame_count + frame] = cel;
+      const auto resolve{[&](std::size_t layer, std::uint16_t frame) -> const cel_info *
+                         {
+                           const cel_info &cel{grid[layer * frame_count + frame]};
+                           if (!cel.present) return nullptr;
+                           if (cel.kind != 1) return &cel;
+                           if (cel.link >= frame_count) return nullptr;
+                           const cel_info &linked{grid[layer * frame_count + cel.link]};
+                           return linked.present ? &linked : nullptr;
+                         }};
+      const auto decode{[&](const cel_info &cel) -> std::vector<unsigned char>
+                        {
+                          std::vector<unsigned char> pixels(static_cast<std::size_t>(cel.width) * cel.height * 4);
+                          if (cel.kind == 0)
+                          {
+                            if (cel.size < pixels.size())
+                              throw std::runtime_error("Truncated raw cel in Aseprite file: " + file.string());
+                            std::copy_n(bytes.data() + cel.offset, pixels.size(), pixels.data());
+                          }
+                          else
+                          {
+                            const int decoded{stbi_zlib_decode_buffer(
+                              reinterpret_cast<char *>(pixels.data()), static_cast<int>(pixels.size()),
+                              reinterpret_cast<const char *>(bytes.data() + cel.offset), static_cast<int>(cel.size))};
+                            if (decoded < 0 || static_cast<std::size_t>(decoded) != pixels.size())
+                              throw std::runtime_error("Failed to decompress Aseprite cel: " + file.string());
+                          }
+                          return pixels;
+                        }};
+
+      const unsigned int frame_width{canvas_width}, frame_height{canvas_height};
+      const unsigned int width{frame_width * frame_count}, height{frame_height};
+      std::vector<unsigned char> sheet(static_cast<std::size_t>(width) * height * 4, 0);
+      for (std::uint16_t frame{}; frame < frame_count; ++frame)
+        for (std::size_t layer{}; layer < layers.size(); ++layer)
+        {
+          if (!layers[layer].image || !layers[layer].visible) continue;
+          if (layers[layer].blend != 0)
+            throw std::runtime_error("Unsupported Aseprite blend mode on layer '" + layers[layer].name +
+                                     "' (only Normal is supported): " + file.string());
+          const cel_info *cel{resolve(layer, frame)};
+          if (!cel || cel->width == 0 || cel->height == 0) continue;
+          const std::vector<unsigned char> pixels{decode(*cel)};
+          const double layer_alpha{layers[layer].opacity / 255.0};
+          for (unsigned int row{}; row < cel->height; ++row)
+          {
+            const int y{cel->y + static_cast<int>(row)};
+            if (y < 0 || y >= static_cast<int>(frame_height)) continue;
+            for (unsigned int column{}; column < cel->width; ++column)
+            {
+              const int x{cel->x + static_cast<int>(column)};
+              if (x < 0 || x >= static_cast<int>(frame_width)) continue;
+              const std::size_t source{(static_cast<std::size_t>(row) * cel->width + column) * 4};
+              const double source_alpha{pixels[source + 3] / 255.0 * layer_alpha};
+              if (source_alpha <= 0.0) continue;
+              const std::size_t destination{
+                (static_cast<std::size_t>(y) * width + (static_cast<std::size_t>(frame) * frame_width + x)) * 4};
+              const double destination_alpha{sheet[destination + 3] / 255.0};
+              const double alpha{source_alpha + destination_alpha * (1.0 - source_alpha)};
+              if (alpha <= 0.0) continue;
+              for (std::size_t channel{}; channel < 3; ++channel)
+              {
+                const double source_channel{pixels[source + channel] / 255.0};
+                const double destination_channel{sheet[destination + channel] / 255.0};
+                const double blended{
+                  (source_channel * source_alpha + destination_channel * destination_alpha * (1.0 - source_alpha)) /
+                  alpha};
+                sheet[destination + channel] = static_cast<unsigned char>(blended * 255.0 + 0.5);
+              }
+              sheet[destination + 3] = static_cast<unsigned char>(alpha * 255.0 + 0.5);
+            }
+          }
+        }
+      for (unsigned int row{}; row < height / 2; ++row)
+        std::swap_ranges(sheet.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(row) * width * 4),
+                         sheet.begin() + static_cast<std::ptrdiff_t>((static_cast<std::size_t>(row) + 1) * width * 4),
+                         sheet.begin() +
+                           static_cast<std::ptrdiff_t>(static_cast<std::size_t>(height - 1 - row) * width * 4));
+
+      aseprite result{};
+      result.data.assign(reinterpret_cast<std::byte *>(sheet.data()),
+                         reinterpret_cast<std::byte *>(sheet.data()) + sheet.size());
+      result.width = width;
+      result.height = height;
+      result.channels = 4;
+      result.resolution = {frame_width, frame_height};
+      for (const tag_info &tag : tags)
+      {
+        if (tag.from >= frame_count || tag.to >= frame_count || tag.from > tag.to)
+          throw std::runtime_error("Aseprite tag '" + tag.name + "' has an invalid frame range: " + file.string());
+        aseprite::animation animation{};
+        animation.name = tag.name;
+        animation.range = {tag.from, tag.to};
+        for (std::uint16_t frame{tag.from}; frame <= tag.to; ++frame)
+        {
+          animation.times.push_back(durations[frame]);
+          std::unordered_map<std::string, std::array<double, 4>> hitboxes{};
+          for (std::size_t layer{}; layer < layers.size(); ++layer)
+          {
+            if (!layers[layer].hitbox || !layers[layer].visible) continue;
+            const cel_info *cel{resolve(layer, frame)};
+            if (!cel || cel->width == 0 || cel->height == 0) continue;
+            hitboxes[layers[layer].name] = {static_cast<double>(cel->x), static_cast<double>(cel->y),
+                                            static_cast<double>(cel->x + cel->width),
+                                            static_cast<double>(cel->y + cel->height)};
+          }
+          animation.hitboxes.push_back(std::move(hitboxes));
+        }
+        result.animations.push_back(std::move(animation));
+      }
+      return result;
+    }
 
     std::ifstream input_file(file);
     if (!input_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
@@ -34057,6 +34407,7 @@ namespace csb
    * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
    * | `std::vector<std::byte>`: Writes the byte array to the file.
    * | `image`: Writing images is not supported.
+   * | `aseprite`: Writing aseprite files is not supported.
    * | `nlohmann::json`: Writes the JSON object to the file.
    *
    * See also: `read_file`, `modify_file`.
@@ -34076,6 +34427,8 @@ namespace csb
     }
     else if constexpr (std::same_as<type, image>)
       throw std::runtime_error("Writing images is not supported.");
+    else if constexpr (std::same_as<type, aseprite>)
+      throw std::runtime_error("Writing aseprite files is not supported.");
 
     std::ofstream output_file(file);
     if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
@@ -34099,6 +34452,7 @@ namespace csb
    * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
    * | `std::vector<std::byte>`: Writes the byte array to the file.
    * | `image`: Modifying images is not supported.
+   * | `aseprite`: Modifying aseprite files is not supported.
    * | `nlohmann::json`: Writes the JSON object to the file.
    *
    * See also: `read_file`, `write_file`.
@@ -34106,7 +34460,10 @@ namespace csb
   template <utility::serializable type, utility::modifier<type> modifier>
   void modify_file(const std::filesystem::path &file, const modifier &modify)
   {
-    if constexpr (std::same_as<type, image>) throw std::runtime_error("Modifying images is not supported.");
+    if constexpr (std::same_as<type, image>)
+      throw std::runtime_error("Modifying images is not supported.");
+    else if constexpr (std::same_as<type, aseprite>)
+      throw std::runtime_error("Modifying aseprite files is not supported.");
 
     type container{read_file<type>(file)};
     container = modify(container);
@@ -35726,7 +36083,8 @@ namespace csb
       if (!std::filesystem::exists(build_path)) std::filesystem::create_directories(build_path);
       utility::live_execute(
         std::format("cd {} && {}{}{}", subproject_path.string(), host_platform == LINUX ? "./" : "",
-                    (std::filesystem::path{"csb"} / "script" / "build").string(), host_platform == WINDOWS ? ".bat" : ".sh"),
+                    (std::filesystem::path{"csb"} / "script" / "build").string(),
+                    host_platform == WINDOWS ? ".bat" : ".sh"),
         [&repo_name, &version](const std::string &)
         { print<COUT>("Building subproject {} ({})...\n", repo_name, version); },
         [&subproject_path](const std::string &)
