@@ -33303,7 +33303,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 2.1.0
+// CSB 2.2.0
 
 #include <algorithm>
 #include <array>
@@ -33475,6 +33475,40 @@ enum print_stream
 
 namespace csb
 {
+  // A packed, memory-mappable container of blobs. Append blobs in order, then write_file<csp> serialises a 32-byte
+  // header (magic, version, flags, fingerprint, signature, size) followed by the 16-byte-aligned content region.
+  struct csp
+  {
+    std::vector<std::byte> content{};
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> table{};
+
+    void append(const std::vector<std::byte> &blob)
+    {
+      while (content.size() % 16 != 0) content.push_back(std::byte{});
+      table.emplace_back(static_cast<std::uint64_t>(32 + content.size()), static_cast<std::uint64_t>(blob.size()));
+      content.insert(content.end(), blob.begin(), blob.end());
+    }
+    std::uint64_t signature() const
+    {
+      std::uint64_t hash{14695981039346656037ull};
+      for (const auto byte : content)
+      {
+        hash ^= static_cast<std::uint8_t>(byte);
+        hash *= 1099511628211ull;
+      }
+      return hash;
+    }
+    std::uint32_t fingerprint() const
+    {
+      std::uint32_t crc{0xFFFFFFFFu};
+      for (const auto byte : content)
+      {
+        crc ^= static_cast<std::uint8_t>(byte);
+        for (int bit{}; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
+      }
+      return ~crc;
+    }
+  };
   struct image
   {
     std::vector<std::byte> data{};
@@ -33542,8 +33576,9 @@ namespace csb
     concept tuple = requires { typename std::tuple_size<tuple_type>::type; };
     template <typename type>
     concept serializable = std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
-                           std::same_as<type, std::vector<std::byte>> || std::same_as<type, image> ||
-                           std::same_as<type, aseprite> || std::same_as<type, nlohmann::json>;
+                           std::same_as<type, std::vector<std::byte>> || std::same_as<type, csp> ||
+                           std::same_as<type, image> || std::same_as<type, aseprite> ||
+                           std::same_as<type, nlohmann::json>;
     template <typename mod, typename data_type>
     concept modifier = requires(mod modify, const data_type &value) {
       { modify(value) } -> std::convertible_to<data_type>;
@@ -34017,6 +34052,7 @@ namespace csb
    * | `std::string`: Reads the file into a single string.
    * | `std::vector<std::string>`: Reads the file into a list of strings, one per line.
    * | `std::vector<std::byte>`: Reads the file into a byte array.
+   * | `csp`: Reading csp data is not supported.
    * | `image`: Reads the file as an image using stb_image - returns data, width, height and channels.
    * | `aseprite`: Reads the file as a resource containing image data as well as frame and hitbox data.
    * | `nlohmann::json`: Reads the file as a JSON object.
@@ -34040,6 +34076,8 @@ namespace csb
       input_file.close();
       return container;
     }
+    else if constexpr (std::same_as<type, csp>)
+      throw std::runtime_error("Reading csp data is not supported.");
     else if constexpr (std::same_as<type, image>)
     {
       image result{};
@@ -34406,6 +34444,7 @@ namespace csb
    * | `std::string`: Writes the string to the file.
    * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
    * | `std::vector<std::byte>`: Writes the byte array to the file.
+   * | `csp`: Writes the csp data to the file.
    * | `image`: Writing images is not supported.
    * | `aseprite`: Writing aseprite files is not supported.
    * | `nlohmann::json`: Writes the JSON object to the file.
@@ -34421,6 +34460,34 @@ namespace csb
       std::ofstream output_file(file, std::ios::binary);
       if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
       if (!output_file.write(reinterpret_cast<const char *>(container.data()), container.size()))
+        throw std::runtime_error("Failed to write file: " + file.string());
+      output_file.close();
+      return;
+    }
+    else if constexpr (std::same_as<type, csp>)
+    {
+      std::vector<std::byte> bytes{};
+      const auto append{[&bytes](const void *value, std::size_t count)
+                        {
+                          const auto *raw{static_cast<const std::byte *>(value)};
+                          bytes.insert(bytes.end(), raw, raw + count);
+                        }};
+      const char magic[4]{'C', 'S', 'P', '0'};
+      const std::uint32_t version{1};
+      const std::uint32_t flags{0};
+      const std::uint32_t fingerprint{container.fingerprint()};
+      const std::uint64_t signature{container.signature()};
+      const std::uint64_t size{static_cast<std::uint64_t>(container.content.size())};
+      append(magic, 4);
+      append(&version, 4);
+      append(&flags, 4);
+      append(&fingerprint, 4);
+      append(&signature, 8);
+      append(&size, 8);
+      bytes.insert(bytes.end(), container.content.begin(), container.content.end());
+      std::ofstream output_file(file, std::ios::binary);
+      if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+      if (!output_file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
         throw std::runtime_error("Failed to write file: " + file.string());
       output_file.close();
       return;
@@ -34451,6 +34518,7 @@ namespace csb
    * | `std::string`: Writes the string to the file.
    * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
    * | `std::vector<std::byte>`: Writes the byte array to the file.
+   * | `csp`: Modifying csp data is not supported.
    * | `image`: Modifying images is not supported.
    * | `aseprite`: Modifying aseprite files is not supported.
    * | `nlohmann::json`: Writes the JSON object to the file.
@@ -34460,7 +34528,9 @@ namespace csb
   template <utility::serializable type, utility::modifier<type> modifier>
   void modify_file(const std::filesystem::path &file, const modifier &modify)
   {
-    if constexpr (std::same_as<type, image>)
+    if constexpr (std::same_as<type, csp>)
+      throw std::runtime_error("Modifying csp data is not supported.");
+    else if constexpr (std::same_as<type, image>)
       throw std::runtime_error("Modifying images is not supported.");
     else if constexpr (std::same_as<type, aseprite>)
       throw std::runtime_error("Modifying aseprite files is not supported.");
@@ -36173,6 +36243,7 @@ namespace csb
    *                      are embedded.
    * | `resources`: A list of resource files to embed.
    * | `outputs`: A pair of output paths specifying where to write the generated header and source files respectively.
+   * | `check_files`: A list of files that will trigger a re-run of the function if missing or changed.
    *
    * See also: `read_file`, `byte_to_hex`.
    */
@@ -36189,7 +36260,8 @@ namespace csb
           &end_content,
         const std::function<bool(const std::filesystem::path &)> &accept_function,
         const std::vector<std::filesystem::path> &resources,
-        const std::pair<std::filesystem::path, std::filesystem::path> &outputs)
+        const std::pair<std::filesystem::path, std::filesystem::path> &outputs,
+        const std::vector<std::filesystem::path> &check_files)
   {
     if (resources.empty()) throw std::runtime_error("No resources to embed.");
     if (outputs.first.empty() || outputs.second.empty()) throw std::runtime_error("Embed output files not set.");
@@ -36270,12 +36342,17 @@ namespace csb
         return placeholder;
       }};
 
+    auto checks = std::vector<std::filesystem::path>{output_header, output_source};
+    checks.reserve(check_files.size() + 2);
+    for (const auto file : check_files) checks.push_back(file);
     task_run(
       [&](const std::vector<std::filesystem::path> &task_resources,
           const std::vector<std::filesystem::path> &task_outputs)
       {
-        print<COUT>("Generating embedded resources into '{}' and '{}'... ", task_outputs.front().string(),
-                    task_outputs.back().string());
+        if (task_outputs.size() < 2) throw std::runtime_error("You must define a header and source output file.");
+        std::pair<std::filesystem::path, std::filesystem::path> fixed_outputs = {task_outputs.at(0), task_outputs.at(1)};
+        print<COUT>("Generating embedded resources into '{}' and '{}'... ", fixed_outputs.first.string(),
+                    fixed_outputs.second.string());
 
         auto header_content{header_start_content};
         auto source_content{source_start_content};
@@ -36318,25 +36395,37 @@ namespace csb
         if (header_end_function) header_content += header_end_function(files);
         if (source_end_function) source_content += source_end_function(files);
 
-        for (const auto &output : task_outputs)
         {
-          if (output.has_parent_path()) std::filesystem::create_directories(output.parent_path());
-          std::ofstream output_file(output);
+          if (fixed_outputs.first.has_parent_path()) std::filesystem::create_directories(fixed_outputs.first.parent_path());
+          std::ofstream output_file(fixed_outputs.first);
           if (!output_file.is_open())
-            throw std::runtime_error(std::format("Failed to open embed output file for writing: {}.", output.string()));
-          if (output.extension() == ".hpp" || output.extension() == ".h")
+            throw std::runtime_error(std::format("Failed to open embed output file for writing: {}.", fixed_outputs.first.string()));
+          if (fixed_outputs.first.extension() == ".hpp" || fixed_outputs.first.extension() == ".h")
             output_file << header_content;
-          else if (output.extension() == ".cpp" || output.extension() == ".c")
+          else if (fixed_outputs.first.extension() == ".cpp" || fixed_outputs.first.extension() == ".c")
             output_file << source_content;
           else
-            throw std::runtime_error(std::format("Embed output file has unsupported extension: {}.", output.string()));
+            throw std::runtime_error(std::format("Embed output file has unsupported extension: {}.", fixed_outputs.first.string()));
+          output_file.close();
+        }
+        {
+          if (fixed_outputs.second.has_parent_path()) std::filesystem::create_directories(fixed_outputs.second.parent_path());
+          std::ofstream output_file(fixed_outputs.second);
+          if (!output_file.is_open())
+            throw std::runtime_error(std::format("Failed to open embed output file for writing: {}.", fixed_outputs.second.string()));
+          if (fixed_outputs.second.extension() == ".hpp" || fixed_outputs.second.extension() == ".h")
+            output_file << header_content;
+          else if (fixed_outputs.second.extension() == ".cpp" || fixed_outputs.second.extension() == ".c")
+            output_file << source_content;
+          else
+            throw std::runtime_error(std::format("Embed output file has unsupported extension: {}.", fixed_outputs.second.string()));
           output_file.close();
         }
 
         print<COUT>("done.\n");
         return std::string();
       },
-      resources, {output_header, output_source});
+      resources, checks);
   }
 
   // Generates a compile_commands.json file for the current project.
