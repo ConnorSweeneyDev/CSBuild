@@ -33303,7 +33303,241 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
 // NOLINTEND
 // clang-format on
 
-// CSB 2.2.1
+// CSP 1.0.0
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <ios>
+#include <span>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+
+  #include <fileapi.h>
+  #include <handleapi.h>
+  #include <memoryapi.h>
+  #include <winnt.h>
+#else
+  #include <fcntl.h>
+  #include <sys/mman.h>
+  #include <sys/stat.h>
+  #include <unistd.h>
+#endif
+
+namespace csp
+{
+  /*
+   Format
+   A csp file is a 32-byte header followed by a 16-byte-aligned content region. The writer (build-time) and mapper
+   (run-time) agree on this layout and the two algorithms below.
+  */
+  inline constexpr char magic[4]{'C', 'S', 'P', '0'};
+  inline constexpr std::uint32_t version{1};
+  struct header
+  {
+    char magic[4];
+    std::uint32_t version;
+    std::uint32_t flags;
+    std::uint32_t fingerprint;
+    std::uint64_t signature;
+    std::uint64_t size;
+  };
+  static_assert(sizeof(header) == 32);
+
+  inline std::uint32_t fingerprint(const void *data, std::size_t size)
+  {
+    const auto *bytes{static_cast<const unsigned char *>(data)};
+    std::uint32_t crc{0xFFFFFFFFu};
+    for (std::size_t index{}; index < size; ++index)
+    {
+      crc ^= bytes[index];
+      for (int bit{}; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
+    }
+    return ~crc;
+  }
+  inline std::uint64_t signature(const void *data, std::size_t size)
+  {
+    const auto *bytes{static_cast<const unsigned char *>(data)};
+    std::uint64_t hash{14695981039346656037ull};
+    for (std::size_t index{}; index < size; ++index)
+    {
+      hash ^= bytes[index];
+      hash *= 1099511628211ull;
+    }
+    return hash;
+  }
+
+  /*
+   Writer (Build-Time)
+   Pack is a memory-mappable container of blobs. Append blobs in order, then write() serialises the header followed by
+   the 16-byte-aligned content region. `table` records the (offset, size) each blob landed at so the build can emit
+   matching patches; it is not serialised.
+  */
+  struct pack
+  {
+    std::vector<std::byte> content{};
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> table{};
+
+    void append(const std::vector<std::byte> &blob)
+    {
+      while (content.size() % 16 != 0) content.push_back(std::byte{});
+      table.emplace_back(static_cast<std::uint64_t>(sizeof(header) + content.size()),
+                         static_cast<std::uint64_t>(blob.size()));
+      content.insert(content.end(), blob.begin(), blob.end());
+    }
+    std::uint64_t signature() const { return csp::signature(content.data(), content.size()); }
+    std::uint32_t fingerprint() const { return csp::fingerprint(content.data(), content.size()); }
+  };
+
+  inline void write(const pack &container, const std::filesystem::path &file)
+  {
+    header head{};
+    std::memcpy(head.magic, magic, sizeof(magic));
+    head.version = version;
+    head.flags = 0;
+    head.fingerprint = container.fingerprint();
+    head.signature = container.signature();
+    head.size = static_cast<std::uint64_t>(container.content.size());
+
+    std::vector<std::byte> bytes(sizeof(header));
+    std::memcpy(bytes.data(), &head, sizeof(header));
+    bytes.insert(bytes.end(), container.content.begin(), container.content.end());
+
+    std::ofstream output_file(file, std::ios::binary);
+    if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
+    if (!output_file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
+      throw std::runtime_error("Failed to write file: " + file.string());
+  }
+
+  /*
+   Mapper (Run-Time)
+   The application declares a manifest of patches: each patch points a span at a region of the mapped file. mount() maps
+   the file, validates the header, and fills in every span. Constructing a manifest registers it for the next mount().
+  */
+  struct patch
+  {
+    std::span<const unsigned char> *target;
+    std::uint64_t offset;
+    std::uint64_t size;
+  };
+  struct manifest
+  {
+    manifest(const char *path, std::uint64_t signature, std::span<const patch> patches);
+    const char *path;
+    std::uint64_t signature;
+    std::span<const patch> patches;
+  } inline const *registered{};
+  class mapping
+  {
+  public:
+    mapping() = default;
+    ~mapping();
+    mapping(const mapping &) = delete;
+    mapping &operator=(const mapping &) = delete;
+
+    void open(const std::filesystem::path &file);
+    const unsigned char *base() const { return data; }
+    std::size_t size() const { return length; }
+
+  private:
+    const unsigned char *data{};
+    std::size_t length{};
+  } inline current{};
+
+  inline manifest::manifest(const char *path_, std::uint64_t signature_, std::span<const patch> patches_)
+    : path{path_}, signature{signature_}, patches{patches_}
+  { registered = this; }
+
+  inline mapping::~mapping()
+  {
+    if (!data) return;
+#ifdef _WIN32
+    UnmapViewOfFile(data);
+#else
+    munmap(const_cast<unsigned char *>(data), length);
+#endif
+  }
+
+  inline void mapping::open(const std::filesystem::path &file)
+  {
+#ifdef _WIN32
+    void *handle{
+      CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+    if (handle == INVALID_HANDLE_VALUE) throw std::runtime_error("Failed to open csp file '" + file.string() + "'");
+    LARGE_INTEGER bytes{};
+    if (!GetFileSizeEx(handle, &bytes))
+    {
+      CloseHandle(handle);
+      throw std::runtime_error("Failed to size csp file '" + file.string() + "'");
+    }
+    void *map{CreateFileMappingW(handle, nullptr, PAGE_READONLY, 0, 0, nullptr)};
+    if (!map)
+    {
+      CloseHandle(handle);
+      throw std::runtime_error("Failed to map csp file '" + file.string() + "'");
+    }
+    void *view{MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0)};
+    CloseHandle(map);
+    CloseHandle(handle);
+    if (!view) throw std::runtime_error("Failed to view csp file '" + file.string() + "'");
+    data = static_cast<const unsigned char *>(view);
+    length = static_cast<std::size_t>(bytes.QuadPart);
+#else
+    const int descriptor{::open(file.c_str(), O_RDONLY)};
+    if (descriptor < 0) throw std::runtime_error("Failed to open csp file '" + file.string() + "'");
+    struct stat status{};
+    if (fstat(descriptor, &status) != 0)
+    {
+      ::close(descriptor);
+      throw std::runtime_error("Failed to size csp file '" + file.string() + "'");
+    }
+    void *address{mmap(nullptr, static_cast<std::size_t>(status.st_size), PROT_READ, MAP_PRIVATE, descriptor, 0)};
+    ::close(descriptor);
+    if (address == MAP_FAILED) throw std::runtime_error("Failed to map csp file '" + file.string() + "'");
+    data = static_cast<const unsigned char *>(address);
+    length = static_cast<std::size_t>(status.st_size);
+#endif
+  }
+
+  inline void mount(const std::filesystem::path &directory)
+  {
+    if (!registered) return;
+
+    const std::filesystem::path file{directory / registered->path};
+    current.open(file);
+
+    const unsigned char *base{current.base()};
+    if (current.size() < sizeof(header)) throw std::runtime_error("Csp file '" + file.string() + "' is truncated");
+    const header &head{*reinterpret_cast<const header *>(base)};
+    if (std::memcmp(head.magic, magic, sizeof(magic)) != 0)
+      throw std::runtime_error("Csp file '" + file.string() + "' is not a csp file");
+    if (head.version != version)
+      throw std::runtime_error("Csp file '" + file.string() + "' has an unsupported version");
+    if (head.signature != registered->signature)
+      throw std::runtime_error("Csp file '" + file.string() + "' does not match this build");
+    if (current.size() != sizeof(header) + head.size)
+      throw std::runtime_error("Csp file '" + file.string() + "' has an unexpected size");
+    if (csp::fingerprint(base + sizeof(header), head.size) != head.fingerprint)
+      throw std::runtime_error("Csp file '" + file.string() + "' is corrupted");
+
+    for (const auto &entry : registered->patches)
+      *entry.target = std::span<const unsigned char>{base + entry.offset, entry.size};
+  }
+}
+
+// CSB 2.3.0
 
 #include <algorithm>
 #include <array>
@@ -33360,7 +33594,9 @@ enum platform
   #endif
   #define PLATFORM WINDOWS
 
-  #define NOMINMAX
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
   #include <windows.h>
 
   #include <consoleapi2.h>
@@ -33475,40 +33711,6 @@ enum print_stream
 
 namespace csb
 {
-  // A packed, memory-mappable container of blobs. Append blobs in order, then write_file<csp> serialises a 32-byte
-  // header (magic, version, flags, fingerprint, signature, size) followed by the 16-byte-aligned content region.
-  struct csp
-  {
-    std::vector<std::byte> content{};
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> table{};
-
-    void append(const std::vector<std::byte> &blob)
-    {
-      while (content.size() % 16 != 0) content.push_back(std::byte{});
-      table.emplace_back(static_cast<std::uint64_t>(32 + content.size()), static_cast<std::uint64_t>(blob.size()));
-      content.insert(content.end(), blob.begin(), blob.end());
-    }
-    std::uint64_t signature() const
-    {
-      std::uint64_t hash{14695981039346656037ull};
-      for (const auto byte : content)
-      {
-        hash ^= static_cast<std::uint8_t>(byte);
-        hash *= 1099511628211ull;
-      }
-      return hash;
-    }
-    std::uint32_t fingerprint() const
-    {
-      std::uint32_t crc{0xFFFFFFFFu};
-      for (const auto byte : content)
-      {
-        crc ^= static_cast<std::uint8_t>(byte);
-        for (int bit{}; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1u) ? 0xEDB88320u : 0u);
-      }
-      return ~crc;
-    }
-  };
   struct image
   {
     std::vector<std::byte> data{};
@@ -33577,7 +33779,7 @@ namespace csb
     template <typename type>
     concept serializable =
       std::same_as<type, std::string> || std::same_as<type, std::vector<std::string>> ||
-      std::same_as<type, std::vector<std::byte>> || std::same_as<type, csp> || std::same_as<type, image> ||
+      std::same_as<type, std::vector<std::byte>> || std::same_as<type, csp::pack> || std::same_as<type, image> ||
       std::same_as<type, aseprite> || std::same_as<type, nlohmann::json>;
     template <typename mod, typename data_type>
     concept modifier = requires(mod modify, const data_type &value) {
@@ -34052,7 +34254,7 @@ namespace csb
    * | `std::string`: Reads the file into a single string.
    * | `std::vector<std::string>`: Reads the file into a list of strings, one per line.
    * | `std::vector<std::byte>`: Reads the file into a byte array.
-   * | `csp`: Reading csp data is not supported.
+   * | `csp::pack`: Reading csp data is not supported.
    * | `image`: Reads the file as an image using stb_image - returns data, width, height and channels.
    * | `aseprite`: Reads the file as a resource containing image data as well as frame and hitbox data.
    * | `nlohmann::json`: Reads the file as a JSON object.
@@ -34076,7 +34278,7 @@ namespace csb
       input_file.close();
       return container;
     }
-    else if constexpr (std::same_as<type, csp>)
+    else if constexpr (std::same_as<type, csp::pack>)
       throw std::runtime_error("Reading csp data is not supported.");
     else if constexpr (std::same_as<type, image>)
     {
@@ -34183,7 +34385,7 @@ namespace csb
       std::vector<tag_info> tags{};
       std::vector<double> durations(frame_count, 0.0);
       std::string group{};
-      bool image_group{}, hitbox_group{};
+      bool image_group{};
 
       for (std::uint16_t frame{}; frame < frame_count; ++frame)
       {
@@ -34227,7 +34429,7 @@ namespace csb
                 throw std::runtime_error("Unexpected Aseprite top-level group '" + name +
                                          "' (only 'image' and 'hitbox' are allowed): " + file.string());
               group = name;
-              (name == "image" ? image_group : hitbox_group) = true;
+              if (name == "image") image_group = true;
             }
             else
             {
@@ -34289,8 +34491,6 @@ namespace csb
 
       if (!image_group)
         throw std::runtime_error("Aseprite file is missing the required 'image' group: " + file.string());
-      if (!hitbox_group)
-        throw std::runtime_error("Aseprite file is missing the required 'hitbox' group: " + file.string());
       if (tags.empty()) throw std::runtime_error("Aseprite file must contain at least one tag: " + file.string());
       for (std::size_t first{}; first < tags.size(); ++first)
         for (std::size_t second{first + 1}; second < tags.size(); ++second)
@@ -34444,7 +34644,7 @@ namespace csb
    * | `std::string`: Writes the string to the file.
    * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
    * | `std::vector<std::byte>`: Writes the byte array to the file.
-   * | `csp`: Writes the csp data to the file.
+   * | `csp::pack`: Writes the csp data to the file.
    * | `image`: Writing images is not supported.
    * | `aseprite`: Writing aseprite files is not supported.
    * | `nlohmann::json`: Writes the JSON object to the file.
@@ -34464,32 +34664,9 @@ namespace csb
       output_file.close();
       return;
     }
-    else if constexpr (std::same_as<type, csp>)
+    else if constexpr (std::same_as<type, csp::pack>)
     {
-      std::vector<std::byte> bytes{};
-      const auto append{[&bytes](const void *value, std::size_t count)
-                        {
-                          const auto *raw{static_cast<const std::byte *>(value)};
-                          bytes.insert(bytes.end(), raw, raw + count);
-                        }};
-      const char magic[4]{'C', 'S', 'P', '0'};
-      const std::uint32_t version{1};
-      const std::uint32_t flags{0};
-      const std::uint32_t fingerprint{container.fingerprint()};
-      const std::uint64_t signature{container.signature()};
-      const std::uint64_t size{static_cast<std::uint64_t>(container.content.size())};
-      append(magic, 4);
-      append(&version, 4);
-      append(&flags, 4);
-      append(&fingerprint, 4);
-      append(&signature, 8);
-      append(&size, 8);
-      bytes.insert(bytes.end(), container.content.begin(), container.content.end());
-      std::ofstream output_file(file, std::ios::binary);
-      if (!output_file.is_open()) throw std::runtime_error("Failed to open file: " + file.string());
-      if (!output_file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size())))
-        throw std::runtime_error("Failed to write file: " + file.string());
-      output_file.close();
+      csp::write(container, file);
       return;
     }
     else if constexpr (std::same_as<type, image>)
@@ -34518,7 +34695,7 @@ namespace csb
    * | `std::string`: Writes the string to the file.
    * | `std::vector<std::string>`: Writes each string in the list to the file, one per line.
    * | `std::vector<std::byte>`: Writes the byte array to the file.
-   * | `csp`: Modifying csp data is not supported.
+   * | `csp::pack`: Modifying csp data is not supported.
    * | `image`: Modifying images is not supported.
    * | `aseprite`: Modifying aseprite files is not supported.
    * | `nlohmann::json`: Writes the JSON object to the file.
@@ -34528,7 +34705,7 @@ namespace csb
   template <utility::serializable type, utility::modifier<type> modifier>
   void modify_file(const std::filesystem::path &file, const modifier &modify)
   {
-    if constexpr (std::same_as<type, csp>)
+    if constexpr (std::same_as<type, csp::pack>)
       throw std::runtime_error("Modifying csp data is not supported.");
     else if constexpr (std::same_as<type, image>)
       throw std::runtime_error("Modifying images is not supported.");
@@ -36436,9 +36613,9 @@ namespace csb
   }
 
   // Generates a compile_commands.json file for the current project.
-  inline void generate_compile_commands()
+  inline void generate_compile_commands(const bool headers = false)
   {
-    if (source_files.empty()) throw std::runtime_error("No source files to generate compile commands for.");
+    if (source_files.empty() && !headers) throw std::runtime_error("No source files to generate compile commands for.");
     std::vector<std::filesystem::path> target_files{};
     target_files.reserve(source_files.size() + include_files.size());
     target_files.insert(target_files.end(), source_files.begin(), source_files.end());
@@ -36472,7 +36649,8 @@ namespace csb
       "\\\"{}\\\" -o \\\"{}\\\"\"\n  }},\n",
       escape_backslashes(std::filesystem::current_path().string()), csb_absolute,
       cxx_standard <= CXX20 ? "20" : std::to_string(cxx_standard), compile_definitions, csb_absolute, csb_output)};
-    for (auto iterator{source_files.begin()}; iterator != source_files.end();)
+    for (auto iterator{headers ? target_files.begin() : source_files.begin()};
+         iterator != (headers ? target_files.end() : source_files.end());)
     {
       std::string compiler{};
       if ((*iterator).extension() == ".c")
@@ -36501,7 +36679,7 @@ namespace csb
       content += std::format("-c \\\"{}\\\" -o \\\"{}\\\"\"\n", escape_backslashes((*iterator).string()),
                              escape_backslashes((build_directory / (iterator->stem().string() + ".o")).string()));
       content += "  }";
-      if (++iterator != source_files.end())
+      if (++iterator != (headers ? target_files.end() : source_files.end()))
         content += ",\n";
       else
         content += "\n";
