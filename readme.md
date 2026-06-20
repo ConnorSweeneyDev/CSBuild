@@ -13,6 +13,8 @@ A zero dependency, cross-platform build system for C++ projects.
 - **Embed Support**: Easily embed resources into compilation units.
 - **Json Support**: Easily read from and write to JSON files.
 - **Pixel Data Support**: Easily read pixel data from PNG files.
+- **Aseprite Support**: Easily read pixel, frame and animation data from aseprite files.
+- **CSP Support**: Easily write [CSPack](https://github.com/ConnorSweeneyDev/CSPack) files.
 - **VCPKG Integration**: Integrates with VCPKG for package management.
 - **Clangd Integration**: Generates a `compile_commands.json` file for clangd support.
 - **Clang Format Integration**: Integrates with Clang Format for code formatting.
