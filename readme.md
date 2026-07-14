@@ -25,5 +25,7 @@ A zero dependency, cross-platform build system for C++ projects.
 - An environment with access to `git`.
 
 ## Usage
-You can clone `https://github.com/ConnorSweeneyDev/CSTemplate` for a barebones template project.\
-For advanced usage, refer to [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine) as an example.
+You can clone `https://github.com/ConnorSweeneyDev/CSTemplate` for a barebones template project.
+
+This build system is designed primarily for use with [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine) and
+[CSGame](https://github.com/ConnorSweeneyDev/CSGame), so you can visit those projects for advanced use cases.
