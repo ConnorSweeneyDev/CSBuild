@@ -6,7 +6,7 @@
 .opencode/
 
 # Build Output
-compile_commands.json
+build/
 
 # User Files
 .env
