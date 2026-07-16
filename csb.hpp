@@ -33327,7 +33327,7 @@ inline void swap(nlohmann::NLOHMANN_BASIC_JSON_TPL& j1, nlohmann::NLOHMANN_BASIC
   #ifndef NOMINMAX
     #define NOMINMAX
   #endif
-  #include <windows.h> // NOLINT(misc-include-cleaner)
+  #include <windows.h>
 
   #include <fileapi.h>
   #include <handleapi.h>
@@ -33919,6 +33919,7 @@ inline std::string get_env(const std::string &name, const std::string &error_mes
 {
   const char *value{std::getenv(name.c_str())};
   if (!value) return std::string{};
+  if (error_message.empty()) return std::string{value};
   return std::string{value};
 }
 

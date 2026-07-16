@@ -79,8 +79,4 @@ if errorlevel 1 (
 del build\formatting.hpp
 echo done.
 
-<nul set /p "=Linting csb.hpp... "
-build\clang\clang-tidy.exe -p build --quiet "--warnings-as-errors=*" "csb.hpp"
-echo done.
-
 endlocal

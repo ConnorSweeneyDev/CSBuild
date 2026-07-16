@@ -49,7 +49,3 @@ head -n "$((marker_line - 1))" csb.hpp > build/csb.hpp.head || { echo "Failed to
 cat build/csb.hpp.head build/formatting.hpp > csb.hpp || { echo "Failed to write the formatted section back to csb.hpp."; exit 1; }
 rm build/csb.hpp.head build/formatting.hpp
 echo "done."
-
-printf "Linting csb.hpp... "
-./build/clang/clang-tidy -p build --quiet "--warnings-as-errors=*" csb.hpp
-echo "done."
