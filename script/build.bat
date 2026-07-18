@@ -1,6 +1,7 @@
 @echo off
 setlocal
 
+<nul set /p "=Generating compile_commands.json... "
 if not exist build mkdir build
 set "CURRENT_DIR=%CD%"
 (
@@ -12,6 +13,7 @@ echo     "command": "clang++ -std=c++20 -Wall -Wextra -Wpedantic -Wconversion -W
 echo   }
 echo ]
 ) > build\compile_commands.json
+echo done.
 
 set "CLANG_VERSION=22.1.8"
 set "CLANG_ARCHITECTURE=x86_64"

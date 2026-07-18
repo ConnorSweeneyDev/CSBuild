@@ -1,5 +1,6 @@
 #!/bin/bash
 
+printf "Generating compile_commands.json... "
 mkdir -p build
 current_dir="$(pwd)"
 cat > build/compile_commands.json << EOF
@@ -11,6 +12,7 @@ cat > build/compile_commands.json << EOF
   }
 ]
 EOF
+echo "done."
 
 clang_version="22.1.8"
 clang_architecture="X64"
