@@ -13,7 +13,8 @@ A zero dependency, cross-platform build system for C++ projects.
 - **Json Support**: Easily read from and write to JSON files.
 - **Embed Support**: Easily embed resources into compilation units.
 - **CSPack Support**: Easily write [CSPack](https://github.com/ConnorSweeneyDev/CSPack) files.
-- **CSEngine Integration**: Designed to work primarily with [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine).
+- **CSData Integration**: Uses [CSData](https://github.com/ConnorSweeneyDev/CSPack) to work with
+  [CSEngine](https://github.com/ConnorSweeneyDev/CSEngine).
 - **VCPKG Integration**: Integrates with VCPKG for package management.
 - **Clangd Integration**: Generates a compile_commands.json file for clangd support.
 - **Clang Tidy Integration**: Integrates with Clang Tidy for static analysis.
